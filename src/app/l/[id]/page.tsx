@@ -167,6 +167,57 @@ export default function LobbyPage() {
 
         {err && <div className="p-3 rounded border bg-red-50 text-red-700">{err}</div>}
       </div>
+      {/* Finalize (host only; server enforces) */}
+      <section className="space-y-2 border-t pt-4">
+        <h2 className="font-semibold">Finalize</h2>
+        <FinalizePanel lobbyId={lobbyId} />
+      </section>      
     </main>
+  );
+}
+
+function FinalizePanel({ lobbyId }: { lobbyId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [winner, setWinner] = useState<string | null>(null);
+  const [scores, setScores] = useState<Record<string, number> | null>(null);
+
+  async function finalize() {
+    setBusy(true); setErr(null); setWinner(null); setScores(null);
+    try {
+      const res = await fetch(`/api/lobbies/${lobbyId}/finalize`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) { setErr(json.error ?? 'finalize failed'); return; }
+      const r = json.result;
+      setWinner(r?.winner_candidate_id ?? null);
+      setScores(r?.scores ?? null);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="space-y-2">
+      <button
+        onClick={finalize}
+        disabled={busy}
+        className="rounded border px-3 py-2 hover:bg-gray-50 disabled:opacity-50"
+      >
+        {busy ? 'Finalizing…' : 'Finalize & Compute Winner'}
+      </button>
+
+      {err && <div className="p-2 rounded border bg-red-50 text-red-700">{err}</div>}
+
+      {winner && (
+        <div className="p-3 rounded border bg-green-50">
+          <div className="font-semibold">Winner Candidate ID:</div>
+          <div className="break-all">{winner}</div>
+          {scores && (
+            <div className="mt-2">
+              <div className="font-semibold">Scores</div>
+              <pre className="text-xs bg-white rounded p-2 border">{JSON.stringify(scores, null, 2)}</pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
