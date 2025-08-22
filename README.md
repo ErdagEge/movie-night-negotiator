@@ -148,7 +148,7 @@ src/
 ---
 
 ### Usage (local demo)
-1. Go to **/**, create a lobby. You’ll be redirected to **/l/<id>**.
+1. Go to **/**, create a lobby. You’ll be redirected to **/l/id**.
 2. In another browser/incognito, open the same link to join as a guest.
 3. Everyone adds movies and saves their own ranking.
 4. Host clicks Finalize & Compute Winner to see the winner + scores.
