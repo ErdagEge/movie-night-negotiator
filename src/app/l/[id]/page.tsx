@@ -17,12 +17,16 @@ export default function LobbyPage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
-  async function loadCandidates() {
+  async function loadCandidates(): Promise<Candidate[]> {
     setErr(null);
     const res = await fetch(`/api/lobbies/${lobbyId}/candidates`, { cache: 'no-store' });
     const json = await res.json();
-    if (!res.ok) setErr(json.error ?? 'failed to load candidates');
-    else setCands(json.candidates);
+    if (!res.ok) {
+      setErr(json.error ?? 'failed to load candidates');
+      return [];
+    }
+    setCands(json.candidates);
+    return json.candidates as Candidate[];
   }
 
   async function loadMyRanking() {
@@ -58,14 +62,21 @@ export default function LobbyPage() {
         body: JSON.stringify({ title: newTitle }),
       });
       const json = await res.json();
-      if (!res.ok) setErr(json.error ?? 'add failed');
-      else {
-        setNewTitle('');
-        await loadCandidates();
-        // If user hasn't customized order, sync order to list
-        setOrder(prev => prev.length ? prev : (json.candidates?.map?.((c: Candidate) => c.id) ?? []));
-      }
-    } finally { setLoading(false); }
+      if (!res.ok) { setErr(json.error ?? 'add failed'); return; }
+
+      setNewTitle('');
+      // refetch candidates and merge any new IDs into order
+      const updated = await loadCandidates();
+      setOrder(prev => {
+        const updatedIds = updated.map(c => c.id);
+        if (prev.length === 0) return updatedIds;      // initial auto-fill
+        const setPrev = new Set(prev);
+        const toAppend = updatedIds.filter(id => !setPrev.has(id));
+        return toAppend.length ? [...prev, ...toAppend] : prev;
+      });
+    } finally {
+      setLoading(false);
+    }
   }
 
   function move(idx: number, dir: -1 | 1) {
@@ -170,13 +181,16 @@ export default function LobbyPage() {
       {/* Finalize (host only; server enforces) */}
       <section className="space-y-2 border-t pt-4">
         <h2 className="font-semibold">Finalize</h2>
-        <FinalizePanel lobbyId={lobbyId} />
+        <FinalizePanel lobbyId={lobbyId} cands={cands} />
       </section>      
     </main>
   );
 }
 
-function FinalizePanel({ lobbyId }: { lobbyId: string }) {
+function FinalizePanel({
+  lobbyId,
+  cands,
+}: { lobbyId: string; cands?: { id: string; title: string }[] }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [winner, setWinner] = useState<string | null>(null);
@@ -194,6 +208,9 @@ function FinalizePanel({ lobbyId }: { lobbyId: string }) {
     } finally { setBusy(false); }
   }
 
+  const winnerTitle =
+    winner && cands?.find(c => c.id === winner)?.title;
+
   return (
     <div className="space-y-2">
       <button
@@ -207,13 +224,26 @@ function FinalizePanel({ lobbyId }: { lobbyId: string }) {
       {err && <div className="p-2 rounded border bg-red-50 text-red-700">{err}</div>}
 
       {winner && (
-        <div className="p-3 rounded border bg-green-50">
-          <div className="font-semibold">Winner Candidate ID:</div>
-          <div className="break-all">{winner}</div>
+        <div className="
+          p-3 rounded border
+          border-emerald-600/30
+          bg-emerald-100 text-emerald-900
+          dark:bg-emerald-900/30 dark:text-emerald-100
+        ">
+          <div className="font-semibold text-emerald-800 dark:text-emerald-200">
+            Winner:
+          </div>
+          <div className="mt-1">
+            {winnerTitle && <div className="font-medium">{winnerTitle}</div>}
+            <div className="text-xs opacity-75 font-mono break-all">{winner}</div>
+          </div>
+
           {scores && (
-            <div className="mt-2">
-              <div className="font-semibold">Scores</div>
-              <pre className="text-xs bg-white rounded p-2 border">{JSON.stringify(scores, null, 2)}</pre>
+            <div className="mt-3">
+              <div className="font-semibold text-emerald-800 dark:text-emerald-200">Scores</div>
+              <pre className="text-xs rounded border bg-black/5 dark:bg-white/10 p-2 overflow-auto">
+                {JSON.stringify(scores, null, 2)}
+              </pre>
             </div>
           )}
         </div>
@@ -221,3 +251,4 @@ function FinalizePanel({ lobbyId }: { lobbyId: string }) {
     </div>
   );
 }
+

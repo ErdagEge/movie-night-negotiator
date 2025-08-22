@@ -4,15 +4,16 @@ import { getOrSetClientUserId } from '@/lib/user';
 
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } }
+  ctx: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await ctx.params;            // ⬅️
   const supabase = await createServerClient();
   const userId = await getOrSetClientUserId();
 
   const { data, error } = await supabase
     .from('rankings')
     .select('candidate_id, position')
-    .eq('lobby_id', params.id)
+    .eq('lobby_id', id)
     .eq('user_id', userId)
     .order('position', { ascending: true });
 
@@ -22,8 +23,9 @@ export async function GET(
 
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  ctx: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await ctx.params;            // ⬅️
   const supabase = await createServerClient();
   const userId = await getOrSetClientUserId();
   const body = await req.json();
@@ -33,21 +35,13 @@ export async function POST(
     return NextResponse.json({ error: 'ranking array required' }, { status: 400 });
   }
 
-  // Clear previous rows, then insert positions starting from 1
-  const del = await supabase
-    .from('rankings')
-    .delete()
-    .eq('lobby_id', params.id)
-    .eq('user_id', userId);
+  const del = await supabase.from('rankings').delete()
+    .eq('lobby_id', id).eq('user_id', userId);
   if (del.error) return NextResponse.json({ error: del.error.message }, { status: 500 });
 
   const rows = ranking.map((cid, idx) => ({
-    lobby_id: params.id,
-    user_id: userId,
-    candidate_id: cid,
-    position: idx + 1,
+    lobby_id: id, user_id: userId, candidate_id: cid, position: idx + 1,
   }));
-
   const ins = await supabase.from('rankings').insert(rows);
   if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 });
 
