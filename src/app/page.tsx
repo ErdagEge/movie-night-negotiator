@@ -1,12 +1,14 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function Home() {
   const [title, setTitle] = useState('');
   const [creating, setCreating] = useState(false);
   const [result, setResult] = useState<{ lobbyId: string; title: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   async function createLobby() {
     setError(null);
@@ -28,6 +30,7 @@ export default function Home() {
       } else {
         setResult(json);
         setTitle('');
+        router.push(`/l/${json.lobbyId}`); // ← navigate to the lobby
       }
     } catch (e: any) {
       setError(String(e?.message ?? e));
