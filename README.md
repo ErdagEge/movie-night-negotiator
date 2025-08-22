@@ -41,14 +41,14 @@ npm i @supabase/supabase-js @supabase/ssr zod
 ```
 
 ### 2) Environment variables
-Create .env.local:
+Create **.env.local**:
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-public-key>
 # Optional for AI rationale later:
 # OPENAI_API_KEY=sk-...
 ```
-> Note: use the exact Project URL from Supabase Settings → API (must end with .supabase.co, no /dashboard).
+> Note: use the exact Project URL from Supabase Settings → API (must end with **.supabase.co**, no **/dashboard**).
 
 ### 3) Database schema (no auth/RLS yet)
 In Supabase SQL Editor run:
@@ -109,15 +109,15 @@ npm run dev
 ---
 
 ### How it works (current thin slice)
-- Guest identity: cookie mn_uid (UUID) assigned on first API call.
-- Create lobby: POST /api/lobbies → inserts lobby + adds host membership.
-- Join lobby: POST /api/lobbies/[id]/join → upserts (guest or host) + optional nickname.
-- Candidates: GET/POST /api/lobbies/[id]/candidates
-- Ranking (per user): GET/POST /api/lobbies/[id]/rankings with ordered candidate IDs.
-- Finalize: POST /api/lobbies/[id]/finalize → computes Borda winner and stores results.
+- Guest identity: cookie **mn_uid** (UUID) assigned on first API call.
+- Create lobby: POST **/api/lobbies** → inserts lobby + adds host membership.
+- Join lobby: POST **/api/lobbies/[id]/join** → upserts (guest or host) + optional nickname.
+- Candidates: GET/POST **/api/lobbies/[id]/candidates**
+- Ranking (per user): GET/POST **/api/lobbies/[id]/rankings** with ordered candidate IDs.
+- Finalize: POST **/api/lobbies/[id]/finalize** → computes Borda winner and stores **results**.
 > Next.js 15 notes:
-> - In route handlers, params is async → const { id } = await ctx.params.
-> - cookies() can be async → const cookieStore = await cookies().
+> - "In route handlers, **params** is async → **const { id } = await ctx.params**."
+> - "**cookies()** can be async → **const cookieStore = await cookies()**."
 ---
 
 Project structure (relevant bits)
@@ -148,7 +148,7 @@ src/
 ---
 
 ### Usage (local demo)
-1. Go to /, create a lobby. You’ll be redirected to /l/<id>.
+1. Go to **/**, create a lobby. You’ll be redirected to **/l/<id>**.
 2. In another browser/incognito, open the same link to join as a guest.
 3. Everyone adds movies and saves their own ranking.
 4. Host clicks Finalize & Compute Winner to see the winner + scores.
@@ -165,9 +165,9 @@ src/
 ---
 
 ### Configuration & deployment
-- Vercel: set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in project env.
+- Vercel: set **NEXT_PUBLIC_SUPABASE_URL** and **NEXT_PUBLIC_SUPABASE_ANON_KEY** in project env.
 - Supabase: create tables via SQL above. (RLS policies can be added later.)
-- OpenAI (optional): set OPENAI_API_KEY. Keep calls to one per lobby.
+- OpenAI (optional): set **OPENAI_API_KEY**. Keep calls to one per lobby.
 ---
 
 ### License
