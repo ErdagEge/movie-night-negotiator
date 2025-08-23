@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 
 type Candidate = { id: string; title: string; created_at: string; added_by: string | null };
 
@@ -81,6 +82,43 @@ export default function LobbyPage() {
       setOrder(cands.map(c => c.id));
     }
   }, [cands]);
+
+  useEffect(() => {
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel(`lobby:${lobbyId}:candidates`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'candidates',
+          filter: `lobby_id=eq.${lobbyId}`,
+        },
+        async () => {
+          // Reload candidates on any change
+          const updated = await loadCandidates();
+          // Keep ranking order in sync: append new IDs, drop deleted ones
+          setOrder((prev) => {
+            const ids = (updated ?? []).map((c) => c.id);
+            if (prev.length === 0) return ids;
+            const prevSet = new Set(prev);
+            // append new
+            const appended = ids.filter((id) => !prevSet.has(id));
+            // keep only existing
+            const kept = prev.filter((id) => ids.includes(id));
+            return appended.length ? [...kept, ...appended] : kept;
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [lobbyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   async function addCandidate() {
     setErr(null);
