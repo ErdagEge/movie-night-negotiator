@@ -4,6 +4,14 @@ import { useParams } from 'next/navigation';
 
 type Candidate = { id: string; title: string; created_at: string; added_by: string | null };
 
+function getSavedName() {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem('mn_name') || '';
+}
+function saveName(n: string) {
+  try { localStorage.setItem('mn_name', n); } catch {}
+}
+
 export default function LobbyPage() {
   const { id } = useParams<{ id: string }>();
   const lobbyId = String(id);
@@ -16,6 +24,9 @@ export default function LobbyPage() {
   const [order, setOrder] = useState<string[]>([]);        // my ranking order
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  const [myName, setMyName] = useState('');
+  const [members, setMembers] = useState<Array<{user_id:string; role:string; nickname:string|null}>>([]);
 
   async function loadCandidates(): Promise<Candidate[]> {
     setErr(null);
@@ -39,8 +50,28 @@ export default function LobbyPage() {
 
   useEffect(() => {
     (async () => {
+      // 1) ensure membership
+      const initialName = getSavedName();
+      setMyName(initialName);
+      await fetch(`/api/lobbies/${lobbyId}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: initialName || undefined }),
+      });
+
+      // 2) load candidates & my ranking
       await loadCandidates();
       await loadMyRanking();
+
+      // 3) start members polling (simple for now; Realtime later)
+      const loadMembers = async () => {
+        const res = await fetch(`/api/lobbies/${lobbyId}/members`, { cache: 'no-store' });
+        const json = await res.json();
+        if (res.ok) setMembers(json.members);
+      };
+      await loadMembers();
+      const iv = setInterval(loadMembers, 5000);
+      return () => clearInterval(iv);
     })();
   }, []);
 
@@ -132,6 +163,54 @@ export default function LobbyPage() {
               {loading ? 'Adding…' : 'Add'}
             </button>
           </div>
+        </section>
+
+        <section className="space-y-2">
+          <h2 className="font-semibold">You</h2>
+          <div className="flex gap-2">
+            <input
+              className="rounded border px-3 py-2"
+              placeholder="Your name (optional)"
+              value={myName}
+              onChange={(e) => setMyName(e.target.value)}
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter') {
+                  saveName(myName);
+                  await fetch(`/api/lobbies/${lobbyId}/join`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nickname: myName || undefined }),
+                  });
+                }
+              }}
+            />
+            <button
+              className="rounded border px-3 py-2 hover:bg-gray-50"
+              onClick={async () => {
+                saveName(myName);
+                await fetch(`/api/lobbies/${lobbyId}/join`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ nickname: myName || undefined }),
+                });
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </section>
+
+        <section className="space-y-2">
+          <h2 className="font-semibold">Members</h2>
+          {!members.length && <div className="text-gray-500">Nobody here yet</div>}
+          <ul className="space-y-1">
+            {members.map((m) => (
+              <li key={m.user_id} className="flex items-center justify-between rounded border px-3 py-2">
+                <span>{m.nickname || 'Guest'}</span>
+                <span className="text-xs uppercase tracking-wide opacity-60">{m.role}</span>
+              </li>
+            ))}
+          </ul>
         </section>
 
         {/* Rank */}
