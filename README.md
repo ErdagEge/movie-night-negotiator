@@ -33,9 +33,7 @@ Free to host on **Vercel (Hobby)** + **Supabase (Free)**. Optional single OpenAI
 - Candidates: GET/POST **/api/lobbies/[id]/candidates**
 - Ranking (per user): GET/POST **/api/lobbies/[id]/rankings** with ordered candidate IDs.
 - Finalize: POST **/api/lobbies/[id]/finalize** → computes Borda winner and stores **results**.
-> Next.js 15 notes:
-> - "In route handlers, **params** is async → **const { id } = await ctx.params**."
-> - "**cookies()** can be async → **const cookieStore = await cookies()**."
+
 ---
 
 Project structure (relevant bits)
