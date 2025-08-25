@@ -31,11 +31,36 @@ export default function LobbyPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [userId, setUserId] = useState<string>('');
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const [presenceMap, setPresenceMap] =
+    useState<Record<string, { nickname?: string }>>({});
   const presenceChannelRef = useRef<any>(null);
 
   // UX/errors
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Derived: merge DB members with presence-only users
+  const displayMembers = useMemo(() => {
+    const byId = new Map(members.map(m => [m.user_id, { ...m }]));
+    for (const [uid, info] of Object.entries(presenceMap)) {
+      if (!byId.has(uid)) {
+        byId.set(uid, { user_id: uid, role: 'guest', nickname: info.nickname ?? null });
+      } else {
+        const m = byId.get(uid)!;
+        // ✅ Always prefer presence nickname if provided (shows changes instantly)
+        if (info.nickname) m.nickname = info.nickname;
+      }
+    }
+    // ...sorting stays the same
+    return Array.from(byId.values()).sort((a, b) => {
+      if (a.role !== b.role) return a.role === 'host' ? -1 : 1;
+      const na = (a.nickname ?? '').toLowerCase();
+      const nb = (b.nickname ?? '').toLowerCase();
+      if (na !== nb) return na < nb ? -1 : 1;
+      return a.user_id.localeCompare(b.user_id);
+    });
+  }, [members, presenceMap]);
+
 
   // --- Data loaders ---
   async function loadCandidates(): Promise<Candidate[]> {
@@ -62,37 +87,33 @@ export default function LobbyPage() {
   }
 
   // --- Init: join lobby, prime data, wire realtime (members + presence) ---
-    useEffect(() => {
+  useEffect(() => {
     let mounted = true;
 
     const supabase = createClient();
     let membersChannel: any | null = null;
     let presenceChannel: any | null = null;
+    let pollTimer: any | null = null;
 
     (async () => {
-      // 1) ensure membership & nickname
+      // ensure membership with current nickname
       await fetch(`/api/lobbies/${lobbyId}/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname: myName || undefined }),
       });
 
-      // 2) initial data
       await loadCandidates();
       await loadMyRanking();
 
       // first members fetch
-      await (async () => {
-        const res = await fetch(`/api/lobbies/${lobbyId}/members`, { cache: 'no-store' });
-        const json = await res.json();
-        if (mounted && res.ok) setMembers(json.members);
-      })();
+      await loadMembersOnce();
 
-      // who am I?
+      // who am I (cookie uuid)?
       const me = await fetch('/api/me').then(r => r.json());
       if (mounted) setUserId(me.userId);
 
-      // 3) realtime: members (DB changes)
+      // Realtime DB changes for members
       membersChannel = supabase
         .channel(`lobby:${lobbyId}:members`)
         .on(
@@ -103,17 +124,14 @@ export default function LobbyPage() {
             table: 'lobby_members',
             filter: `lobby_id=eq.${lobbyId}`,
           },
-          async (payload) => {
-            // temporary debug:
-            // console.log('members change', payload);
-            const res = await fetch(`/api/lobbies/${lobbyId}/members`, { cache: 'no-store' });
-            const json = await res.json();
-            if (mounted && res.ok) setMembers(json.members);
+          async () => {
+            if (!mounted) return;
+            await loadMembersOnce();
           }
         )
         .subscribe();
 
-      // 4) realtime: presence (who's online)
+      // Presence: who's online in this lobby
       presenceChannel = supabase.channel(
         `presence:lobby:${lobbyId}`,
         { config: { presence: { key: me.userId } } }
@@ -122,14 +140,18 @@ export default function LobbyPage() {
       presenceChannel
         .on('presence', { event: 'sync' }, () => {
           if (!mounted) return;
-          const state = presenceChannel!.presenceState() as Record<string, any[]>;
-          setOnlineIds(new Set(Object.keys(state)));
+          const state = presenceChannel!.presenceState() as Record<string, Array<{ userId: string; nickname?: string }>>;
+          const map: Record<string, { nickname?: string }> = {};
+          for (const [uid, arr] of Object.entries(state)) {
+            const last = arr[arr.length - 1] || {};
+            map[uid] = { nickname: last?.nickname };
+          }
+          setPresenceMap(map);
+          setOnlineIds(new Set(Object.keys(map)));
         });
 
       await presenceChannel.subscribe(
-        async (
-          status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR'
-        ) => {
+        async (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => {
           if (status === 'SUBSCRIBED') {
             await presenceChannel!.track({ userId: me.userId, nickname: myName || 'Guest' });
           }
@@ -137,17 +159,20 @@ export default function LobbyPage() {
       );
 
       presenceChannelRef.current = presenceChannel;
+
+      // Fallback: poll members every 7s (covers any missed realtime)
+      pollTimer = setInterval(loadMembersOnce, 7000);
     })();
 
     return () => {
       mounted = false;
       if (membersChannel) supabase.removeChannel(membersChannel);
       if (presenceChannel) supabase.removeChannel(presenceChannel);
+      if (pollTimer) clearInterval(pollTimer);
     };
-    // We deliberately do NOT depend on myName; the Save button re-tracks presence.
+    // deliberately not depending on myName; Save will re-track presence
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyId]);
-
 
   // If no saved order yet, follow candidates list order
   useEffect(() => {
@@ -296,7 +321,9 @@ export default function LobbyPage() {
                       body: JSON.stringify({ nickname: myName || undefined }),
                     });
                     const chan = presenceChannelRef.current;
-                    if (chan) { try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {} }
+                    if (chan) {
+                      try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {}
+                    }
                   }
                 }}
               />
@@ -310,7 +337,9 @@ export default function LobbyPage() {
                     body: JSON.stringify({ nickname: myName || undefined }),
                   });
                   const chan = presenceChannelRef.current;
-                  if (chan) { try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {} }
+                  if (chan) {
+                    try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {}
+                  }
                 }}
               >
                 Save
@@ -362,9 +391,9 @@ export default function LobbyPage() {
 
           <section className="space-y-2">
             <h2 className="font-semibold">Members</h2>
-            {!members.length && <div className="text-gray-500">Nobody here yet</div>}
+            {!displayMembers.length && <div className="text-gray-500">Nobody here yet</div>}
             <ul className="space-y-1">
-              {members.map((m) => (
+              {displayMembers.map((m) => (
                 <li key={m.user_id} className="flex items-center justify-between rounded border px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className={onlineIds.has(m.user_id) ? 'text-green-500' : 'text-gray-400'}>●</span>
