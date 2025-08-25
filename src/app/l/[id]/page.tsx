@@ -62,63 +62,92 @@ export default function LobbyPage() {
   }
 
   // --- Init: join lobby, prime data, wire realtime (members + presence) ---
-  useEffect(() => {
+    useEffect(() => {
+    let mounted = true;
+
+    const supabase = createClient();
+    let membersChannel: any | null = null;
+    let presenceChannel: any | null = null;
+
     (async () => {
-      // ensure membership with current nickname
+      // 1) ensure membership & nickname
       await fetch(`/api/lobbies/${lobbyId}/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname: myName || undefined }),
       });
 
+      // 2) initial data
       await loadCandidates();
       await loadMyRanking();
-      await loadMembersOnce();
 
-      // who am I (cookie uuid)?
+      // first members fetch
+      await (async () => {
+        const res = await fetch(`/api/lobbies/${lobbyId}/members`, { cache: 'no-store' });
+        const json = await res.json();
+        if (mounted && res.ok) setMembers(json.members);
+      })();
+
+      // who am I?
       const me = await fetch('/api/me').then(r => r.json());
-      setUserId(me.userId);
+      if (mounted) setUserId(me.userId);
 
-      const supabase = createClient();
-
-      // Realtime DB changes for members
-      const membersChannel = supabase
+      // 3) realtime: members (DB changes)
+      membersChannel = supabase
         .channel(`lobby:${lobbyId}:members`)
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'lobby_members',
-          filter: `lobby_id=eq.${lobbyId}`,
-        }, async () => { await loadMembersOnce(); })
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'lobby_members',
+            filter: `lobby_id=eq.${lobbyId}`,
+          },
+          async (payload) => {
+            // temporary debug:
+            // console.log('members change', payload);
+            const res = await fetch(`/api/lobbies/${lobbyId}/members`, { cache: 'no-store' });
+            const json = await res.json();
+            if (mounted && res.ok) setMembers(json.members);
+          }
+        )
         .subscribe();
 
-      // Presence: who's online in this lobby
-      const presenceChannel = supabase.channel(
+      // 4) realtime: presence (who's online)
+      presenceChannel = supabase.channel(
         `presence:lobby:${lobbyId}`,
         { config: { presence: { key: me.userId } } }
       );
 
       presenceChannel
         .on('presence', { event: 'sync' }, () => {
-          const state = presenceChannel.presenceState() as Record<string, any[]>;
+          if (!mounted) return;
+          const state = presenceChannel!.presenceState() as Record<string, any[]>;
           setOnlineIds(new Set(Object.keys(state)));
         });
 
-      await presenceChannel.subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await presenceChannel.track({ userId: me.userId, nickname: myName || 'Guest' });
+      await presenceChannel.subscribe(
+        async (
+          status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR'
+        ) => {
+          if (status === 'SUBSCRIBED') {
+            await presenceChannel!.track({ userId: me.userId, nickname: myName || 'Guest' });
+          }
         }
-      });
+      );
 
       presenceChannelRef.current = presenceChannel;
-
-      return () => {
-        supabase.removeChannel(membersChannel);
-        supabase.removeChannel(presenceChannel);
-      };
     })();
+
+    return () => {
+      mounted = false;
+      if (membersChannel) supabase.removeChannel(membersChannel);
+      if (presenceChannel) supabase.removeChannel(presenceChannel);
+    };
+    // We deliberately do NOT depend on myName; the Save button re-tracks presence.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyId]);
+
 
   // If no saved order yet, follow candidates list order
   useEffect(() => {
