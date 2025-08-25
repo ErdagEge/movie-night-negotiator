@@ -1,7 +1,7 @@
 # 🎬 Movie Night Negotiator
 
 Group movie picker with ranked voting (Borda). Create a lobby, add movies, let everyone rank them, then compute a winner.  
-Free to host on **Vercel (Hobby)** + **Supabase (Free)**. Optional single OpenAI call for a short “why this fits everyone” blurb.
+Optional single OpenAI call for a short “why this fits everyone” conclusion.
 
 ---
 
