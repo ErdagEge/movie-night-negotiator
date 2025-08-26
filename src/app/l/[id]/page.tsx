@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 
 type Candidate = { id: string; title: string; created_at: string; added_by: string | null };
 type Member = { user_id: string; role: string; nickname: string | null; joined_at?: string };
+type Progress = { candidateCount: number; memberCount: number; fullBallots: number; myIsFull: boolean };
 
 function getSavedName() {
   if (typeof window === 'undefined') return '';
@@ -35,6 +36,14 @@ export default function LobbyPage() {
     useState<Record<string, { nickname?: string }>>({});
   const presenceChannelRef = useRef<any>(null);
 
+  // Progress
+  const [progress, setProgress] = useState<Progress>({
+    candidateCount: 0,
+    memberCount: 0,
+    fullBallots: 0,
+    myIsFull: false,
+  });
+
   // UX/errors
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -47,11 +56,10 @@ export default function LobbyPage() {
         byId.set(uid, { user_id: uid, role: 'guest', nickname: info.nickname ?? null });
       } else {
         const m = byId.get(uid)!;
-        // ✅ Always prefer presence nickname if provided (shows changes instantly)
+        // Prefer presence nickname for instant updates
         if (info.nickname) m.nickname = info.nickname;
       }
     }
-    // ...sorting stays the same
     return Array.from(byId.values()).sort((a, b) => {
       if (a.role !== b.role) return a.role === 'host' ? -1 : 1;
       const na = (a.nickname ?? '').toLowerCase();
@@ -60,7 +68,6 @@ export default function LobbyPage() {
       return a.user_id.localeCompare(b.user_id);
     });
   }, [members, presenceMap]);
-
 
   // --- Data loaders ---
   async function loadCandidates(): Promise<Candidate[]> {
@@ -86,6 +93,12 @@ export default function LobbyPage() {
     if (res.ok) setMembers(json.members);
   }
 
+  async function loadProgress() {
+    const res = await fetch(`/api/lobbies/${lobbyId}/progress`, { cache: 'no-store' });
+    const json = await res.json();
+    if (res.ok) setProgress(json);
+  }
+
   // --- Init: join lobby, prime data, wire realtime (members + presence) ---
   useEffect(() => {
     let mounted = true;
@@ -105,9 +118,8 @@ export default function LobbyPage() {
 
       await loadCandidates();
       await loadMyRanking();
-
-      // first members fetch
       await loadMembersOnce();
+      await loadProgress();
 
       // who am I (cookie uuid)?
       const me = await fetch('/api/me').then(r => r.json());
@@ -127,6 +139,7 @@ export default function LobbyPage() {
           async () => {
             if (!mounted) return;
             await loadMembersOnce();
+            await loadProgress();
           }
         )
         .subscribe();
@@ -161,7 +174,10 @@ export default function LobbyPage() {
       presenceChannelRef.current = presenceChannel;
 
       // Fallback: poll members every 7s (covers any missed realtime)
-      pollTimer = setInterval(loadMembersOnce, 7000);
+      pollTimer = setInterval(async () => {
+        await loadMembersOnce();
+        await loadProgress();
+      }, 7000);
     })();
 
     return () => {
@@ -174,7 +190,7 @@ export default function LobbyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyId]);
 
-  // If no saved order yet, will follow candidates list order
+  // If no saved order yet, follow candidates list order
   useEffect(() => {
     if (cands.length && order.length === 0) {
       setOrder(cands.map(c => c.id));
@@ -193,6 +209,7 @@ export default function LobbyPage() {
         filter: `lobby_id=eq.${lobbyId}`,
       }, async () => {
         const updated = await loadCandidates();
+        await loadProgress();
         // sync ranking: append new, drop deleted, keep order for existing
         setOrder(prev => {
           const ids = updated.map(c => c.id);
@@ -206,6 +223,23 @@ export default function LobbyPage() {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lobbyId]);
+
+  // Realtime for rankings → update progress
+  useEffect(() => {
+    const supabase = createClient();
+    const ch = supabase
+      .channel(`lobby:${lobbyId}:rankings`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'rankings',
+        filter: `lobby_id=eq.${lobbyId}`,
+      }, () => { loadProgress(); })
+      .subscribe();
+
+    return () => { supabase.removeChannel(ch); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyId]);
 
@@ -225,6 +259,7 @@ export default function LobbyPage() {
       setNewTitle('');
       // local optimistic refresh (realtime will also fire)
       const updated = await loadCandidates();
+      await loadProgress();
       setOrder(prev => {
         const updatedIds = updated.map(c => c.id);
         if (prev.length === 0) return updatedIds;
@@ -259,10 +294,13 @@ export default function LobbyPage() {
       const json = await res.json();
       if (!res.ok) setErr(json.error ?? 'save failed');
       else setSaveMsg('Ranking saved ✅');
+      // progress will also update via realtime; this is a quick nudge
+      await loadProgress();
     } finally { setSaving(false); }
   }
 
   const byId = useMemo(() => new Map(cands.map(c => [c.id, c])), [cands]);
+  const canFinalize = progress.candidateCount > 0 && progress.fullBallots > 0;
 
   return (
     <main className="min-h-screen flex items-start justify-center">
@@ -386,7 +424,10 @@ export default function LobbyPage() {
         <div className="space-y-6">
           <section className="space-y-2">
             <h2 className="font-semibold">Finalize</h2>
-            <FinalizePanel lobbyId={lobbyId} cands={cands} />
+            <div className="text-sm text-gray-500">
+              Full ballots: <span className="font-semibold">{progress.fullBallots}</span> / {progress.memberCount} · Candidates: {progress.candidateCount}
+            </div>
+            <FinalizePanel lobbyId={lobbyId} cands={cands} canFinalize={canFinalize} />
           </section>
 
           <section className="space-y-2">
@@ -413,7 +454,8 @@ export default function LobbyPage() {
 function FinalizePanel({
   lobbyId,
   cands,
-}: { lobbyId: string; cands?: { id: string; title: string }[] }) {
+  canFinalize,
+}: { lobbyId: string; cands?: { id: string; title: string }[]; canFinalize: boolean }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [winner, setWinner] = useState<string | null>(null);
@@ -437,11 +479,14 @@ function FinalizePanel({
     <div className="space-y-2">
       <button
         onClick={finalize}
-        disabled={busy}
+        disabled={busy || !canFinalize}
         className="rounded border px-3 py-2 hover:bg-gray-50 disabled:opacity-50"
       >
         {busy ? 'Finalizing…' : 'Finalize & Compute Winner'}
       </button>
+      {!canFinalize && (
+        <div className="text-xs text-gray-500">Need at least one complete ballot.</div>
+      )}
 
       {err && <div className="p-2 rounded border bg-red-50 text-red-700">{err}</div>}
 
