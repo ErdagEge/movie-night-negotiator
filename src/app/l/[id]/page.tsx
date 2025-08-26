@@ -174,7 +174,7 @@ export default function LobbyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyId]);
 
-  // If no saved order yet, follow candidates list order
+  // If no saved order yet, will follow candidates list order
   useEffect(() => {
     if (cands.length && order.length === 0) {
       setOrder(cands.map(c => c.id));
