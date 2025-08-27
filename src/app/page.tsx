@@ -32,8 +32,9 @@ export default function Home() {
         setTitle('');
         router.push(`/l/${json.lobbyId}`); // ← navigate to the lobby
       }
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
     } finally {
       setCreating(false);
     }

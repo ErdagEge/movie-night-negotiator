@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import type { RealtimeChannel } from '@supabase/supabase-js';
+type ChannelState = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR';
 
 type Candidate = { id: string; title: string; created_at: string; added_by: string | null };
 type Member = { user_id: string; role: string; nickname: string | null; joined_at?: string };
@@ -34,7 +36,7 @@ export default function LobbyPage() {
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [presenceMap, setPresenceMap] =
     useState<Record<string, { nickname?: string }>>({});
-  const presenceChannelRef = useRef<any>(null);
+  const presenceChannelRef = useRef<RealtimeChannel | null>(null);
 
   // Progress
   const [progress, setProgress] = useState<Progress>({
@@ -104,9 +106,9 @@ export default function LobbyPage() {
     let mounted = true;
 
     const supabase = createClient();
-    let membersChannel: any | null = null;
-    let presenceChannel: any | null = null;
-    let pollTimer: any | null = null;
+    let membersChannel: RealtimeChannel | null = null;
+    let presenceChannel: RealtimeChannel | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
 
     (async () => {
       // ensure membership with current nickname
@@ -164,12 +166,13 @@ export default function LobbyPage() {
         });
 
       await presenceChannel.subscribe(
-        async (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => {
-          if (status === 'SUBSCRIBED') {
-            await presenceChannel!.track({ userId: me.userId, nickname: myName || 'Guest' });
+        async (status: ChannelState) => {
+          if (status === 'SUBSCRIBED' && presenceChannel) {
+            await presenceChannel.track({ userId: me.userId, nickname: myName || 'Guest' });
           }
         }
       );
+
 
       presenceChannelRef.current = presenceChannel;
 

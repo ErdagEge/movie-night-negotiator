@@ -4,6 +4,8 @@ import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { getOrSetClientUserId } from '@/lib/user';
 
+type JoinBody = { nickname?: string };
+
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> }
@@ -12,9 +14,14 @@ export async function POST(
   const supabase = await createServerClient();
   const userId = await getOrSetClientUserId();
 
-  const body = await req.json().catch(() => ({} as any));
-  const raw = typeof body?.nickname === 'string' ? body.nickname : '';
-  const nick = raw.trim() || null;
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+  const nickname = (body as JoinBody).nickname;
+  const nick = typeof nickname === 'string' && nickname.trim() ? nickname.trim() : null;
 
   // Ensure lobby exists
   const { data: lobby, error: lerr } = await supabase
@@ -22,9 +29,7 @@ export async function POST(
     .select('id, creator')
     .eq('id', id)
     .single();
-  if (lerr || !lobby) {
-    return NextResponse.json({ error: 'lobby not found' }, { status: 404 });
-  }
+  if (lerr || !lobby) return NextResponse.json({ error: 'lobby not found' }, { status: 404 });
 
   // Membership fetch
   const { data: existing, error: qerr } = await supabase
@@ -39,22 +44,16 @@ export async function POST(
 
   if (!existing) {
     const { error: ierr } = await supabase.from('lobby_members').insert({
-      lobby_id: id,
-      user_id: userId,
-      role,
-      nickname: nick, // may be null
+      lobby_id: id, user_id: userId, role, nickname: nick,
     });
     if (ierr) return NextResponse.json({ error: ierr.message }, { status: 500 });
-  } else {
-    // ✅ Update nickname if it changed (including clearing it to null)
-    if (nick !== existing.nickname) {
-      const { error: uerr } = await supabase
-        .from('lobby_members')
-        .update({ nickname: nick })
-        .eq('lobby_id', id)
-        .eq('user_id', userId);
-      if (uerr) return NextResponse.json({ error: uerr.message }, { status: 500 });
-    }
+  } else if (nick !== existing.nickname) {
+    const { error: uerr } = await supabase
+      .from('lobby_members')
+      .update({ nickname: nick })
+      .eq('lobby_id', id)
+      .eq('user_id', userId);
+    if (uerr) return NextResponse.json({ error: uerr.message }, { status: 500 });
   }
 
   const { data: lobbyTitle } = await supabase

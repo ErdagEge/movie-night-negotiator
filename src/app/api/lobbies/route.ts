@@ -31,7 +31,8 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ lobbyId: lobby.id, title: lobby.title });
-  } catch (e: any) {
-    return NextResponse.json({ error: String(e?.message ?? e) }, { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
