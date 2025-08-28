@@ -38,6 +38,9 @@ export default function LobbyPage() {
     useState<Record<string, { nickname?: string }>>({});
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
 
+  // Short link
+  const [shortCode, setShortCode] = useState<string | null>(null);
+
   // Progress
   const [progress, setProgress] = useState<Progress>({
     candidateCount: 0,
@@ -111,12 +114,16 @@ export default function LobbyPage() {
     let pollTimer: ReturnType<typeof setInterval> | null = null;
 
     (async () => {
-      // ensure membership with current nickname
-      await fetch(`/api/lobbies/${lobbyId}/join`, {
+      // ensure membership with current nickname & capture short code
+      const joinRes = await fetch(`/api/lobbies/${lobbyId}/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname: myName || undefined }),
       });
+      const joinJson = await joinRes.json();
+      if (joinRes.ok && typeof joinJson?.code === 'string') {
+        setShortCode(joinJson.code);
+      }
 
       await loadCandidates();
       await loadMyRanking();
@@ -172,7 +179,6 @@ export default function LobbyPage() {
           }
         }
       );
-
 
       presenceChannelRef.current = presenceChannel;
 
@@ -312,6 +318,7 @@ export default function LobbyPage() {
         <div className="md:col-span-2 space-y-6">
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold">Lobby: {lobbyId.slice(0, 8)}…</h1>
+
             <button
               onClick={async () => {
                 try { await navigator.clipboard.writeText(window.location.href); alert('Link copied!'); }
@@ -320,6 +327,19 @@ export default function LobbyPage() {
               className="rounded border px-2 py-1 text-sm hover:bg-gray-50"
             >
               Copy invite link
+            </button>
+
+            <button
+              disabled={!shortCode}
+              onClick={async () => {
+                if (!shortCode) return;
+                const shortUrl = `${window.location.origin}/j/${shortCode}`;
+                try { await navigator.clipboard.writeText(shortUrl); alert('Short link copied!'); }
+                catch { alert(shortUrl); }
+              }}
+              className="rounded border px-2 py-1 text-sm hover:bg-gray-50 disabled:opacity-50"
+            >
+              Copy short link
             </button>
           </div>
 

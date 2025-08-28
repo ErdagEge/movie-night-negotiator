@@ -56,17 +56,15 @@ export async function POST(
     if (uerr) return NextResponse.json({ error: uerr.message }, { status: 500 });
   }
 
-  const { data: lobbyTitle } = await supabase
-    .from('lobbies')
-    .select('title')
-    .eq('id', id)
-    .single();
+  const { data: lobbyInfo } = await supabase
+    .from('lobbies').select('title, code').eq('id', id).single();
 
   return NextResponse.json({
     ok: true,
     lobbyId: id,
-    title: lobbyTitle?.title ?? '',
+    title: lobbyInfo?.title ?? '',
     role,
     nickname: nick,
+    code: lobbyInfo?.code ?? null,
   });
 }

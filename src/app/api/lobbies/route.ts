@@ -1,38 +1,45 @@
+export const dynamic = 'force-dynamic';
+
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { getOrSetClientUserId } from '@/lib/user';
+import { randomBytes } from 'crypto';
+
+type CreateBody = { title?: string };
+
+function genCode(): string {
+  // 8-char lowercase hex, matches backfill
+  return randomBytes(4).toString('hex');
+}
 
 export async function POST(req: Request) {
-  try {
-    const supabase = await createServerClient();
-    const userId = await getOrSetClientUserId();
+  const supabase = await createServerClient();
+  const userId = await getOrSetClientUserId();
 
-    const { title } = await req.json();
-    if (!title || typeof title !== 'string' || !title.trim()) {
-      return NextResponse.json({ error: 'title required' }, { status: 400 });
-    }
+  let body: unknown;
+  try { body = await req.json(); } catch { body = {}; }
+  const title = (body as CreateBody).title?.trim() || 'Movie night';
 
-    // 1) create lobby
-    const { data: lobby, error: lerr } = await supabase
+  // Retry a few times in the rare case of a collision
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = genCode();
+
+    const { data, error } = await supabase
       .from('lobbies')
-      .insert({ title: title.trim(), creator: userId })
-      .select('*')
+      .insert({ title, creator: userId, status: 'open', code })
+      .select('id, code')
       .single();
-    if (lerr || !lobby) {
-      return NextResponse.json({ error: lerr?.message ?? 'insert lobby failed' }, { status: 500 });
+
+    if (!error && data) {
+      return NextResponse.json({ lobbyId: data.id, code: data.code });
     }
 
-    // 2) add host membership
-    const { error: merr } = await supabase
-      .from('lobby_members')
-      .insert({ lobby_id: lobby.id, user_id: userId, role: 'host' });
-    if (merr) {
-      return NextResponse.json({ error: merr.message }, { status: 500 });
+    // Only retry on unique violation
+    const pgCode = (error as { code?: string } | null)?.code;
+    if (pgCode !== '23505') {
+      return NextResponse.json({ error: error?.message ?? 'create failed' }, { status: 500 });
     }
-
-    return NextResponse.json({ lobbyId: lobby.id, title: lobby.title });
-  } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: message }, { status: 500 });
   }
+
+  return NextResponse.json({ error: 'Could not allocate invite code' }, { status: 500 });
 }
