@@ -39,19 +39,13 @@ Pick a movie together—fast. Create a lobby, everyone adds titles and ranks the
 
 ---
 
-## Tech at a glance
+## Tech stack
 
 - **Frontend:** Next.js (App Router), TypeScript, Tailwind
 - **Realtime:** Supabase Channels (Postgres Changes + Presence)
 - **Data:** Supabase Postgres (lobbies, members, candidates, rankings, results)
 - **Auth model:** Cookie-based guest identity by default; host role inferred from creator
 - **AI (optional):** OpenAI for a single, cached rationale per lobby
-
----
-
-## Screenshots
-
-> Add a few here—creation screen, live lobby, finalize view, and the AI rationale blurb.
 
 ---
 
@@ -62,7 +56,7 @@ Pick a movie together—fast. Create a lobby, everyone adds titles and ranks the
 
 ---
 
-## Roadmap (high level)
+## Roadmap
 
 - Drag-and-drop ranking
 - Host-only controls (finalize, regenerate code)
