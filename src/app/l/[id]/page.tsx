@@ -38,7 +38,8 @@ export default function LobbyPage() {
     useState<Record<string, { nickname?: string }>>({});
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
 
-  // Short link
+  // Role + short link
+  const [isHost, setIsHost] = useState(false);
   const [shortCode, setShortCode] = useState<string | null>(null);
 
   // Progress
@@ -52,6 +53,7 @@ export default function LobbyPage() {
   // UX/errors
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   // Derived: merge DB members with presence-only users
   const displayMembers = useMemo(() => {
@@ -61,7 +63,6 @@ export default function LobbyPage() {
         byId.set(uid, { user_id: uid, role: 'guest', nickname: info.nickname ?? null });
       } else {
         const m = byId.get(uid)!;
-        // Prefer presence nickname for instant updates
         if (info.nickname) m.nickname = info.nickname;
       }
     }
@@ -114,15 +115,15 @@ export default function LobbyPage() {
     let pollTimer: ReturnType<typeof setInterval> | null = null;
 
     (async () => {
-      // ensure membership with current nickname & capture short code
       const joinRes = await fetch(`/api/lobbies/${lobbyId}/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname: myName || undefined }),
       });
       const joinJson = await joinRes.json();
-      if (joinRes.ok && typeof joinJson?.code === 'string') {
-        setShortCode(joinJson.code);
+      if (joinRes.ok) {
+        if (typeof joinJson?.code === 'string') setShortCode(joinJson.code);
+        setIsHost(joinJson?.role === 'host');
       }
 
       await loadCandidates();
@@ -130,35 +131,22 @@ export default function LobbyPage() {
       await loadMembersOnce();
       await loadProgress();
 
-      // who am I (cookie uuid)?
+      // who am I
       const me = await fetch('/api/me').then(r => r.json());
       if (mounted) setUserId(me.userId);
 
-      // Realtime DB changes for members
+      // realtime: members
       membersChannel = supabase
         .channel(`lobby:${lobbyId}:members`)
         .on(
           'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'lobby_members',
-            filter: `lobby_id=eq.${lobbyId}`,
-          },
-          async () => {
-            if (!mounted) return;
-            await loadMembersOnce();
-            await loadProgress();
-          }
+          { event: '*', schema: 'public', table: 'lobby_members', filter: `lobby_id=eq.${lobbyId}` },
+          async () => { if (!mounted) return; await loadMembersOnce(); await loadProgress(); }
         )
         .subscribe();
 
-      // Presence: who's online in this lobby
-      presenceChannel = supabase.channel(
-        `presence:lobby:${lobbyId}`,
-        { config: { presence: { key: me.userId } } }
-      );
-
+      // presence
+      presenceChannel = supabase.channel(`presence:lobby:${lobbyId}`, { config: { presence: { key: me.userId } } });
       presenceChannel
         .on('presence', { event: 'sync' }, () => {
           if (!mounted) return;
@@ -171,22 +159,15 @@ export default function LobbyPage() {
           setPresenceMap(map);
           setOnlineIds(new Set(Object.keys(map)));
         });
-
-      await presenceChannel.subscribe(
-        async (status: ChannelState) => {
-          if (status === 'SUBSCRIBED' && presenceChannel) {
-            await presenceChannel.track({ userId: me.userId, nickname: myName || 'Guest' });
-          }
+      await presenceChannel.subscribe(async (status: ChannelState) => {
+        if (status === 'SUBSCRIBED' && presenceChannel) {
+          await presenceChannel.track({ userId: me.userId, nickname: myName || 'Guest' });
         }
-      );
-
+      });
       presenceChannelRef.current = presenceChannel;
 
-      // Fallback: poll members every 7s (covers any missed realtime)
-      pollTimer = setInterval(async () => {
-        await loadMembersOnce();
-        await loadProgress();
-      }, 7000);
+      // fallback poll
+      pollTimer = setInterval(async () => { await loadMembersOnce(); await loadProgress(); }, 7000);
     })();
 
     return () => {
@@ -195,7 +176,6 @@ export default function LobbyPage() {
       if (presenceChannel) supabase.removeChannel(presenceChannel);
       if (pollTimer) clearInterval(pollTimer);
     };
-    // deliberately not depending on myName; Save will re-track presence
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyId]);
 
@@ -206,20 +186,16 @@ export default function LobbyPage() {
     }
   }, [cands, order.length]);
 
-  // Realtime for candidates list
+  // realtime: candidates
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase
       .channel(`lobby:${lobbyId}:candidates`)
       .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'candidates',
-        filter: `lobby_id=eq.${lobbyId}`,
+        event: '*', schema: 'public', table: 'candidates', filter: `lobby_id=eq.${lobbyId}`,
       }, async () => {
         const updated = await loadCandidates();
         await loadProgress();
-        // sync ranking: append new, drop deleted, keep order for existing
         setOrder(prev => {
           const ids = updated.map(c => c.id);
           if (prev.length === 0) return ids;
@@ -235,16 +211,13 @@ export default function LobbyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyId]);
 
-  // Realtime for rankings → update progress
+  // realtime: rankings -> progress
   useEffect(() => {
     const supabase = createClient();
     const ch = supabase
       .channel(`lobby:${lobbyId}:rankings`)
       .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'rankings',
-        filter: `lobby_id=eq.${lobbyId}`,
+        event: '*', schema: 'public', table: 'rankings', filter: `lobby_id=eq.${lobbyId}`,
       }, () => { loadProgress(); })
       .subscribe();
 
@@ -259,16 +232,13 @@ export default function LobbyPage() {
     setLoading(true);
     try {
       const res = await fetch(`/api/lobbies/${lobbyId}/candidates`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle }),
       });
       const json = await res.json();
       if (!res.ok) { setErr(json.error ?? 'add failed'); return; }
       setNewTitle('');
-      // local optimistic refresh (realtime will also fire)
-      const updated = await loadCandidates();
-      await loadProgress();
+      const updated = await loadCandidates(); await loadProgress();
       setOrder(prev => {
         const updatedIds = updated.map(c => c.id);
         if (prev.length === 0) return updatedIds;
@@ -290,22 +260,37 @@ export default function LobbyPage() {
   }
 
   async function saveRanking() {
-    setErr(null);
-    setSaveMsg(null);
+    setErr(null); setSaveMsg(null);
     if (!order.length) { setErr('No ranking to save'); return; }
     setSaving(true);
     try {
       const res = await fetch(`/api/lobbies/${lobbyId}/rankings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ranking: order }),
       });
       const json = await res.json();
-      if (!res.ok) setErr(json.error ?? 'save failed');
-      else setSaveMsg('Ranking saved ✅');
-      // progress will also update via realtime; this is a quick nudge
+      if (!res.ok) setErr(json.error ?? 'save failed'); else setSaveMsg('Ranking saved ✅');
       await loadProgress();
     } finally { setSaving(false); }
+  }
+
+  async function deleteCandidate(cid: string) {
+    if (!isHost) { setNote('Host only'); return; }
+    const ok = window.confirm('Delete this title for everyone?');
+    if (!ok) return;
+    const res = await fetch(`/api/lobbies/${lobbyId}/candidates/${cid}`, { method: 'DELETE' });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) setErr((json as { error?: string }).error ?? 'delete failed');
+  }
+
+  async function regenerateCode() {
+    if (!isHost) { setNote('Host only'); return; }
+    const ok = window.confirm('Regenerate invite code? Old link will stop working.');
+    if (!ok) return;
+    const res = await fetch(`/api/lobbies/${lobbyId}/code`, { method: 'POST' });
+    const json = await res.json();
+    if (res.ok) { setShortCode(json.code); alert('New short link copied to clipboard? Click copy again if needed.'); }
+    else setErr(json.error ?? 'could not regenerate code');
   }
 
   const byId = useMemo(() => new Map(cands.map(c => [c.id, c])), [cands]);
@@ -341,6 +326,16 @@ export default function LobbyPage() {
             >
               Copy short link
             </button>
+
+            {isHost && (
+              <button
+                onClick={regenerateCode}
+                className="rounded border px-2 py-1 text-sm hover:bg-gray-50"
+                title="Host only"
+              >
+                Regenerate code
+              </button>
+            )}
           </div>
 
           {/* Add candidate */}
@@ -377,14 +372,11 @@ export default function LobbyPage() {
                   if (e.key === 'Enter') {
                     saveName(myName);
                     await fetch(`/api/lobbies/${lobbyId}/join`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ nickname: myName || undefined }),
                     });
                     const chan = presenceChannelRef.current;
-                    if (chan) {
-                      try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {}
-                    }
+                    if (chan) { try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {} }
                   }
                 }}
               />
@@ -393,14 +385,11 @@ export default function LobbyPage() {
                 onClick={async () => {
                   saveName(myName);
                   await fetch(`/api/lobbies/${lobbyId}/join`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ nickname: myName || undefined }),
                   });
                   const chan = presenceChannelRef.current;
-                  if (chan) {
-                    try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {}
-                  }
+                  if (chan) { try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {} }
                 }}
               >
                 Save
@@ -408,7 +397,7 @@ export default function LobbyPage() {
             </div>
           </section>
 
-          {/* Your ranking */}
+          {/* Your ranking (host can delete titles) */}
           <section className="space-y-2">
             <h2 className="font-semibold">Your ranking</h2>
             {!order.length && <div className="text-gray-500">No items to rank yet</div>}
@@ -423,6 +412,15 @@ export default function LobbyPage() {
                     <div className="flex gap-1">
                       <button onClick={() => move(idx, -1)} className="rounded border px-2 py-1 hover:bg-gray-50">↑</button>
                       <button onClick={() => move(idx, +1)} className="rounded border px-2 py-1 hover:bg-gray-50">↓</button>
+                      {isHost && (
+                        <button
+                          onClick={() => deleteCandidate(cid)}
+                          className="rounded border px-2 py-1 hover:bg-red-50"
+                          title="Delete for everyone (host)"
+                        >
+                          🗑
+                        </button>
+                      )}
                     </div>
                   </li>
                 );
@@ -438,6 +436,7 @@ export default function LobbyPage() {
             </button>
 
             {saveMsg && <div className="text-green-700">{saveMsg}</div>}
+            {note && <div className="text-xs text-gray-500">{note}</div>}
           </section>
 
           {err && <div className="p-3 rounded border bg-red-50 text-red-700">{err}</div>}
@@ -450,7 +449,12 @@ export default function LobbyPage() {
             <div className="text-sm text-gray-500">
               Full ballots: <span className="font-semibold">{progress.fullBallots}</span> / {progress.memberCount} · Candidates: {progress.candidateCount}
             </div>
-            <FinalizePanel lobbyId={lobbyId} cands={cands} canFinalize={canFinalize} />
+            <FinalizePanel
+              lobbyId={lobbyId}
+              cands={cands}
+              canFinalize={progress.candidateCount > 0 && progress.fullBallots > 0}
+              isHost={isHost}
+            />
           </section>
 
           <section className="space-y-2">
@@ -478,13 +482,19 @@ function FinalizePanel({
   lobbyId,
   cands,
   canFinalize,
-}: { lobbyId: string; cands?: { id: string; title: string }[]; canFinalize: boolean }) {
+  isHost,
+}: {
+  lobbyId: string;
+  cands?: { id: string; title: string }[];
+  canFinalize: boolean;
+  isHost: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [winner, setWinner] = useState<string | null>(null);
   const [scores, setScores] = useState<Record<string, number> | null>(null);
 
-  // New: rationale state
+  // AI rationale
   const [rationale, setRationale] = useState<string | null>(null);
   const [rBusy, setRBusy] = useState(false);
   const [rErr, setRErr] = useState<string | null>(null);
@@ -499,7 +509,7 @@ function FinalizePanel({
       setWinner(r?.winner_candidate_id ?? null);
       setScores(r?.scores ?? null);
 
-      // Try to fetch any existing rationale (doesn't generate)
+      // Try to fetch any existing rationale
       try {
         const rres = await fetch(`/api/lobbies/${lobbyId}/rationale`, { method: 'GET', cache: 'no-store' });
         const rjson = await rres.json();
@@ -520,18 +530,20 @@ function FinalizePanel({
     } finally { setRBusy(false); }
   }
 
+  const disabled = busy || !canFinalize || !isHost;
+
   return (
     <div className="space-y-2">
       <button
         onClick={finalize}
-        disabled={busy || !canFinalize}
+        disabled={disabled}
         className="rounded border px-3 py-2 hover:bg-gray-50 disabled:opacity-50"
+        title={isHost ? undefined : 'Host only'}
       >
         {busy ? 'Finalizing…' : 'Finalize & Compute Winner'}
       </button>
-      {!canFinalize && (
-        <div className="text-xs text-gray-500">Need at least one complete ballot.</div>
-      )}
+      {!canFinalize && <div className="text-xs text-gray-500">Need at least one complete ballot.</div>}
+      {!isHost && <div className="text-xs text-gray-500">Host only.</div>}
 
       {err && <div className="p-2 rounded border bg-red-50 text-red-700">{err}</div>}
 
@@ -565,8 +577,9 @@ function FinalizePanel({
               <div className="font-semibold text-emerald-800 dark:text-emerald-200">AI Rationale</div>
               <button
                 onClick={generateRationale}
-                disabled={rBusy}
+                disabled={rBusy || !isHost}
                 className="rounded border px-2 py-1 text-sm hover:bg-gray-50 disabled:opacity-50"
+                title={isHost ? undefined : 'Host only'}
               >
                 {rBusy ? 'Generating…' : (rationale ? 'Regenerate' : 'Generate')}
               </button>
@@ -576,7 +589,7 @@ function FinalizePanel({
               <p className="mt-2 text-sm leading-relaxed">{rationale}</p>
             ) : (
               <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
-                Click “Generate” to produce a short, friendly blurb (1 API call, cached).
+                {isHost ? 'Click “Generate” to produce a short, friendly blurb (cached).' : 'Host can generate a short blurb after finalizing.'}
               </p>
             )}
           </div>
