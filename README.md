@@ -1,6 +1,6 @@
 # 🎬 Movie Night Negotiator
 
-Pick a movie together—fast. Create a lobby, everyone adds titles and ranks them, and the app computes a fair winner (Borda). It’s multiplayer, live, and free-tier friendly. Optional AI writes a short “why this fits everyone” blurb when you finalize.
+Pick a movie together. Create a lobby, everyone adds titles and ranks them, and the app computes a fair winner (Borda). It’s multiplayer, live, and free-tier friendly. Optional AI writes a short “why this fits everyone” blurb when you finalize.
 
 > Demo: add your deployed URL here • Short links supported: `/j/<CODE>`
 
@@ -9,7 +9,7 @@ Pick a movie together—fast. Create a lobby, everyone adds titles and ranks the
 ## Why it’s nice
 
 - **Instant collaboration:** See new titles, members, and ranking progress live.
-- **Fair outcome:** Uses **Borda count** so everyone’s preferences count—not just the loudest voice.
+- **Fair outcome:** Uses **Borda count** so everyone’s preferences count, not just the loudest voice.
 - **Frictionless joining:** Share a **short invite link**; guests pick a nickname and jump in.
 - **One-click finale:** Host computes the winner; (optional) AI explains why it suits the group.
 - **Zero-cost stack:** Next.js on Vercel + Supabase (DB, Realtime). One optional AI call per lobby.
