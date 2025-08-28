@@ -1,90 +1,77 @@
 # 🎬 Movie Night Negotiator
 
-Group movie picker with ranked voting (Borda). Create a lobby, add movies, let everyone rank them, then compute a winner.  
-Optional single OpenAI call for a short “why this fits everyone” conclusion.
+Pick a movie together—fast. Create a lobby, everyone adds titles and ranks them, and the app computes a fair winner (Borda). It’s multiplayer, live, and free-tier friendly. Optional AI writes a short “why this fits everyone” blurb when you finalize.
+
+> Demo: add your deployed URL here • Short links supported: `/j/<CODE>`
 
 ---
 
-## Features
+## Why it’s nice
 
-- ⚡ **Zero-cost stack:** Next.js on Vercel + Supabase Postgres/Auth/Realtime.
-- 🧑‍🤝‍🧑 **Multi-user lobbies:** Share a link; guests join with a nickname (no auth required).
-- 🗳️ **Ranked voting:** Borda count with sensible tie-breaker.
-- 🧠 **AI rationale:** One cached LLM call per finalized lobby.
-- 🔒 **RLS-ready:** Schema and RLS policies planned (can keep guest mode).
-- 🌗 Dark-mode friendly UI.
-
----
-
-## Stack
-
-- **Frontend:** Next.js (App Router), TypeScript, Tailwind CSS
-- **Backend:** Next.js Route Handlers, Supabase JS SDK
-- **DB:** Supabase Postgres
-- **Realtime:** Supabase Realtime channels
-- **AI:** OpenAI (single call on finalize)
+- **Instant collaboration:** See new titles, members, and ranking progress live.
+- **Fair outcome:** Uses **Borda count** so everyone’s preferences count—not just the loudest voice.
+- **Frictionless joining:** Share a **short invite link**; guests pick a nickname and jump in.
+- **One-click finale:** Host computes the winner; (optional) AI explains why it suits the group.
+- **Zero-cost stack:** Next.js on Vercel + Supabase (DB, Realtime). One optional AI call per lobby.
 
 ---
 
-### How it works
-- Guest identity: cookie **mn_uid** (UUID) assigned on first API call.
-- Create lobby: POST **/api/lobbies** → inserts lobby + adds host membership.
-- Join lobby: POST **/api/lobbies/[id]/join** → upserts (guest or host) + optional nickname.
-- Candidates: GET/POST **/api/lobbies/[id]/candidates**
-- Ranking (per user): GET/POST **/api/lobbies/[id]/rankings** with ordered candidate IDs.
-- Finalize: POST **/api/lobbies/[id]/finalize** → computes Borda winner and stores **results**.
+## Key features
+
+- 🧑‍🤝‍🧑 **Multi-user lobbies** with presence (who’s online)
+- 📝 **Add titles** quickly; live updates for all participants
+- 🗳️ **Ranked voting (Borda)** with score breakdown
+- ✅ **Finalize gate**: shows “full ballots” count and enables finalize at the right time
+- 🔗 **Short invites**: `/j/<code>` redirects to the lobby
+- 🧠 **AI rationale** (optional): cached, regenerable, and cheap
+- 🌗 **Clean, minimal UI** with dark-mode friendly colors
 
 ---
 
-Project structure (relevant bits)
-```bash
-src/
-  app/
-    page.tsx                     # create-lobby form (redirects to /l/[id])
-    l/
-      [id]/
-        page.tsx                 # lobby page (add candidates, rank, finalize)
-    api/
-      lobbies/
-        route.ts                 # POST create lobby
-        [id]/
-          join/route.ts          # POST join lobby (nickname)
-          members/route.ts       # GET list members (poll)
-          candidates/route.ts    # GET/POST candidates
-          rankings/route.ts      # GET/POST my ranking
-          finalize/route.ts      # POST finalize (host only)
-  lib/
-    supabase/
-      client.ts
-      server.ts                  # createServerClient() with async cookies
-    user.ts                      # getOrSetClientUserId() cookie helper
-    vote/
-      borda.ts                   # Borda count implementation
-```
+## How it works (30-second tour)
+
+1. **Create** a lobby → share the short link.
+2. **Add** movie candidates (anyone).
+3. **Rank** your list locally; save when ready.
+4. **Watch progress**: “Full ballots: X / Y · Candidates: Z.”
+5. **Finalize** (host): computes winner and shows scores.
+6. *(Optional)* **Generate AI rationale**: a short, friendly justification.
+
 ---
 
-### Usage (local demo)
-1. Go to **/**, create a lobby. You’ll be redirected to **/l/id**.
-2. In another browser/incognito, open the same link to join as a guest.
-3. Everyone adds movies and saves their own ranking.
-4. Host clicks Finalize & Compute Winner to see the winner + scores.
+## Tech at a glance
+
+- **Frontend:** Next.js (App Router), TypeScript, Tailwind
+- **Realtime:** Supabase Channels (Postgres Changes + Presence)
+- **Data:** Supabase Postgres (lobbies, members, candidates, rankings, results)
+- **Auth model:** Cookie-based guest identity by default; host role inferred from creator
+- **AI (optional):** OpenAI for a single, cached rationale per lobby
+
 ---
 
-### Roadmap
-- Supabase Realtime presence & live updates (replace polling).
-- Auth + RLS (keep guest mode; host can promote/log in).
-- AI rationale on finalize (single cached call; optional env).
-- Drag-and-drop ranking UI.
-- Share link UI + invite code.
-- Streaming availability integrations (optional, non-free).
-- Tests (unit: Borda; e2e: basic flows).
+## Screenshots
+
+> Add a few here—creation screen, live lobby, finalize view, and the AI rationale blurb.
+
 ---
 
-### Configuration & deployment
-- Vercel: set **NEXT_PUBLIC_SUPABASE_URL** and **NEXT_PUBLIC_SUPABASE_ANON_KEY** in project env.
-- Supabase: create tables via SQL above. (RLS policies can be added later.)
-- OpenAI (optional): set **OPENAI_API_KEY**. Keep calls to one per lobby.
+## Privacy & cost
+
+- Guests are identified by a **random cookie ID** + nickname (no PII required).
+- Runs comfortably on **free tiers** (Vercel + Supabase). AI is **opt-in** and called **once** per finalize (regenerable).
+
 ---
 
-### License
-MIT — feel free to use, modify, and deploy.
+## Roadmap (high level)
+
+- Drag-and-drop ranking
+- Host-only controls (finalize, regenerate code)
+- Auth + RLS (keep guest flow)
+- QR invites
+- Tests (Borda & API smoke)
+
+---
+
+## License
+
+MIT
