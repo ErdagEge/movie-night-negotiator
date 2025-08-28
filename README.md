@@ -7,10 +7,10 @@ Optional single OpenAI call for a short “why this fits everyone” conclusion.
 
 ## Features
 
-- ⚡ **Zero-cost stack:** Next.js (App Router) on Vercel + Supabase Postgres/Auth/Realtime (free tiers).
+- ⚡ **Zero-cost stack:** Next.js on Vercel + Supabase Postgres/Auth/Realtime.
 - 🧑‍🤝‍🧑 **Multi-user lobbies:** Share a link; guests join with a nickname (no auth required).
 - 🗳️ **Ranked voting:** Borda count with sensible tie-breaker.
-- 🧠 **Optional AI rationale:** One cached LLM call per finalized lobby.
+- 🧠 **AI rationale:** One cached LLM call per finalized lobby.
 - 🔒 **RLS-ready:** Schema and RLS policies planned (can keep guest mode).
 - 🌗 Dark-mode friendly UI.
 
@@ -21,12 +21,12 @@ Optional single OpenAI call for a short “why this fits everyone” conclusion.
 - **Frontend:** Next.js (App Router), TypeScript, Tailwind CSS
 - **Backend:** Next.js Route Handlers, Supabase JS SDK
 - **DB:** Supabase Postgres
-- **Realtime (later step):** Supabase Realtime channels
-- **AI (optional):** OpenAI (single call on finalize)
+- **Realtime:** Supabase Realtime channels
+- **AI:** OpenAI (single call on finalize)
 
 ---
 
-### How it works (current thin slice)
+### How it works
 - Guest identity: cookie **mn_uid** (UUID) assigned on first API call.
 - Create lobby: POST **/api/lobbies** → inserts lobby + adds host membership.
 - Join lobby: POST **/api/lobbies/[id]/join** → upserts (guest or host) + optional nickname.
