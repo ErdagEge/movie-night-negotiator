@@ -484,8 +484,13 @@ function FinalizePanel({
   const [winner, setWinner] = useState<string | null>(null);
   const [scores, setScores] = useState<Record<string, number> | null>(null);
 
+  // New: rationale state
+  const [rationale, setRationale] = useState<string | null>(null);
+  const [rBusy, setRBusy] = useState(false);
+  const [rErr, setRErr] = useState<string | null>(null);
+
   async function finalize() {
-    setBusy(true); setErr(null); setWinner(null); setScores(null);
+    setBusy(true); setErr(null); setWinner(null); setScores(null); setRationale(null);
     try {
       const res = await fetch(`/api/lobbies/${lobbyId}/finalize`, { method: 'POST' });
       const json = await res.json();
@@ -493,10 +498,27 @@ function FinalizePanel({
       const r = json.result;
       setWinner(r?.winner_candidate_id ?? null);
       setScores(r?.scores ?? null);
+
+      // Try to fetch any existing rationale (doesn't generate)
+      try {
+        const rres = await fetch(`/api/lobbies/${lobbyId}/rationale`, { method: 'GET', cache: 'no-store' });
+        const rjson = await rres.json();
+        if (rres.ok) setRationale(rjson?.rationale ?? null);
+      } catch { /* ignore */ }
     } finally { setBusy(false); }
   }
 
   const winnerTitle = winner && cands?.find(c => c.id === winner)?.title;
+
+  async function generateRationale() {
+    setRBusy(true); setRErr(null);
+    try {
+      const res = await fetch(`/api/lobbies/${lobbyId}/rationale`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) { setRErr(json.error ?? 'failed to generate'); return; }
+      setRationale(json.rationale ?? '');
+    } finally { setRBusy(false); }
+  }
 
   return (
     <div className="space-y-2">
@@ -519,21 +541,45 @@ function FinalizePanel({
           border-emerald-600/30
           bg-emerald-100 text-emerald-900
           dark:bg-emerald-900/30 dark:text-emerald-100
+          space-y-3
         ">
-          <div className="font-semibold text-emerald-800 dark:text-emerald-200">Winner:</div>
-          <div className="mt-1">
-            {winnerTitle && <div className="font-medium">{winnerTitle}</div>}
-            <div className="text-xs opacity-75 font-mono break-all">{winner}</div>
+          <div>
+            <div className="font-semibold text-emerald-800 dark:text-emerald-200">Winner:</div>
+            <div className="mt-1">
+              {winnerTitle && <div className="font-medium">{winnerTitle}</div>}
+              <div className="text-xs opacity-75 font-mono break-all">{winner}</div>
+            </div>
           </div>
 
           {scores && (
-            <div className="mt-3">
+            <div>
               <div className="font-semibold text-emerald-800 dark:text-emerald-200">Scores</div>
               <pre className="text-xs rounded border bg-black/5 dark:bg-white/10 p-2 overflow-auto">
                 {JSON.stringify(scores, null, 2)}
               </pre>
             </div>
           )}
+
+          <div className="pt-2 border-t border-emerald-600/20 dark:border-emerald-300/10">
+            <div className="flex items-center justify-between">
+              <div className="font-semibold text-emerald-800 dark:text-emerald-200">AI Rationale</div>
+              <button
+                onClick={generateRationale}
+                disabled={rBusy}
+                className="rounded border px-2 py-1 text-sm hover:bg-gray-50 disabled:opacity-50"
+              >
+                {rBusy ? 'Generating…' : (rationale ? 'Regenerate' : 'Generate')}
+              </button>
+            </div>
+            {rErr && <div className="mt-2 p-2 rounded border bg-red-50 text-red-700">{rErr}</div>}
+            {rationale ? (
+              <p className="mt-2 text-sm leading-relaxed">{rationale}</p>
+            ) : (
+              <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+                Click “Generate” to produce a short, friendly blurb (1 API call, cached).
+              </p>
+            )}
+          </div>
         </div>
       )}
     </div>
