@@ -2,7 +2,7 @@
 
 Pick a movie together. Create a lobby, everyone adds titles and ranks them, and the app computes a fair winner (Borda). It’s multiplayer, live, and free-tier friendly. Optional AI writes a short “why this fits everyone” blurb when you finalize.
 
-> Demo: add your deployed URL here • Short links supported: `/j/<CODE>`
+> Demo: https://movie-night-negotiator.vercel.app/
 
 ---
 
