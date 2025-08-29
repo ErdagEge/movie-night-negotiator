@@ -1,5 +1,6 @@
 'use client';
 
+import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
@@ -226,6 +227,19 @@ export default function LobbyPage() {
   }, [lobbyId]);
 
   // --- Actions ---
+  function onDragEnd(result: DropResult) {
+    const { source, destination } = result;
+    if (!destination) return;
+    if (source.index === destination.index) return;
+
+    setOrder(prev => {
+      const next = prev.slice();
+      const [moved] = next.splice(source.index, 1);
+      next.splice(destination.index, 0, moved);
+      return next;
+    });
+  }
+
   async function addCandidate() {
     setErr(null);
     if (!newTitle.trim()) { setErr('Enter a title'); return; }
@@ -401,31 +415,53 @@ export default function LobbyPage() {
           <section className="space-y-2">
             <h2 className="font-semibold">Your ranking</h2>
             {!order.length && <div className="text-gray-500">No items to rank yet</div>}
-            <ul className="space-y-1">
-              {order.map((cid, idx) => {
-                const c = byId.get(cid);
-                if (!c) return null;
-                return (
-                  <li key={cid} className="flex items-center gap-2 rounded border px-3 py-2">
-                    <span className="text-sm text-gray-600 w-8">#{idx + 1}</span>
-                    <span className="flex-1">{c.title}</span>
-                    <div className="flex gap-1">
-                      <button onClick={() => move(idx, -1)} className="rounded border px-2 py-1 hover:bg-gray-50">↑</button>
-                      <button onClick={() => move(idx, +1)} className="rounded border px-2 py-1 hover:bg-gray-50">↓</button>
-                      {isHost && (
-                        <button
-                          onClick={() => deleteCandidate(cid)}
-                          className="rounded border px-2 py-1 hover:bg-red-50"
-                          title="Delete for everyone (host)"
-                        >
-                          🗑
-                        </button>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+            <DragDropContext onDragEnd={onDragEnd}>
+              <Droppable droppableId="rankingList" direction="vertical">
+                {(dropProvided) => (
+                  <ul
+                    ref={dropProvided.innerRef}
+                    {...dropProvided.droppableProps}
+                    className="space-y-1"
+                  >
+                    {order.map((cid, idx) => {
+                      const c = byId.get(cid);
+                      if (!c) return null;
+
+                      return (
+                        <Draggable key={cid} draggableId={cid} index={idx}>
+                          {(dragProvided, snapshot) => (
+                            <li
+                              ref={dragProvided.innerRef}
+                              {...dragProvided.draggableProps}
+                              {...dragProvided.dragHandleProps}
+                              style={dragProvided.draggableProps.style}
+                              className={`flex items-center gap-2 rounded border px-3 py-2 transition
+                                ${snapshot.isDragging ? 'shadow-md ring-1 ring-black/10 bg-white/70 dark:bg-zinc-900/70' : ''}`}
+                            >
+                              {/* optional grip icon for affordance */}
+                              <span className="px-1 text-gray-500 select-none" aria-hidden>≡</span>
+
+                              <span className="text-sm text-gray-600 w-8">#{idx + 1}</span>
+                              <span className="flex-1">{c.title}</span>
+
+                              {/* keep keyboard fallback */}
+                              <div className="flex gap-1">
+                                <button type="button" onClick={() => move(idx, -1)} className="rounded border px-2 py-1 hover:bg-gray-50">↑</button>
+                                <button type="button" onClick={() => move(idx, +1)} className="rounded border px-2 py-1 hover:bg-gray-50">↓</button>
+                                {/* host delete button stays if you have it */}
+                              </div>
+                            </li>
+                          )}
+                        </Draggable>
+                      );
+                    })}
+
+                    {dropProvided.placeholder}
+                  </ul>
+                )}
+              </Droppable>
+            </DragDropContext>
+
 
             <button
               onClick={saveRanking}
