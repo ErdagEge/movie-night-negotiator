@@ -1,16 +1,80 @@
 'use client';
 
-import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
+
 type ChannelState = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR';
 
 type Candidate = { id: string; title: string; created_at: string; added_by: string | null };
 type Member = { user_id: string; role: string; nickname: string | null; joined_at?: string };
 type Progress = { candidateCount: number; memberCount: number; fullBallots: number; myIsFull: boolean };
 
+/* ---------- tiny UI primitives ---------- */
+function Card({
+  title,
+  subtitle,
+  actions,
+  children,
+  className = '',
+}: {
+  title?: ReactNode;
+  subtitle?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section
+      className={
+        'rounded-2xl border border-white/10 bg-white/5 shadow-lg backdrop-blur-sm ' +
+        'dark:border-white/10 dark:bg-white/5 ' + className
+      }
+    >
+      {(title || subtitle || actions) && (
+        <header className="flex items-start justify-between gap-3 px-5 pt-5">
+          <div>
+            {typeof title === 'string' ? (
+              <h2 className="text-lg font-semibold">{title}</h2>
+            ) : (
+              title
+            )}
+            {subtitle && <p className="mt-1 text-sm text-gray-500">{subtitle}</p>}
+          </div>
+          {actions && <div className="shrink-0">{actions}</div>}
+        </header>
+      )}
+      <div className="px-5 py-4">{children}</div>
+    </section>
+  );
+}
+function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      {...props}
+      className={
+        'rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50 ' +
+        (props.className ?? '')
+      }
+    />
+  );
+}
+function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...props}
+      className={
+        'w-full rounded-lg border border-white/15 bg-black/10 px-3 py-2 outline-none ' +
+        'placeholder:text-gray-500 focus:border-white/30 ' +
+        (props.className ?? '')
+      }
+    />
+  );
+}
+
+/* ---------- helpers ---------- */
 function getSavedName() {
   if (typeof window === 'undefined') return '';
   return localStorage.getItem('mn_name') || '';
@@ -23,40 +87,36 @@ export default function LobbyPage() {
   const { id } = useParams<{ id: string }>();
   const lobbyId = String(id);
 
-  // Candidates + ranking
+  // candidates + ranking
   const [cands, setCands] = useState<Candidate[]>([]);
   const [newTitle, setNewTitle] = useState('');
   const [order, setOrder] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
-  // Members + presence
+  // members + presence
   const [myName, setMyName] = useState(getSavedName());
   const [members, setMembers] = useState<Member[]>([]);
   const [userId, setUserId] = useState<string>('');
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
-  const [presenceMap, setPresenceMap] =
-    useState<Record<string, { nickname?: string }>>({});
+  const [presenceMap, setPresenceMap] = useState<Record<string, { nickname?: string }>>({});
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
 
-  // Role + short link
+  // role + short link
   const [isHost, setIsHost] = useState(false);
   const [shortCode, setShortCode] = useState<string | null>(null);
 
-  // Progress
+  // progress
   const [progress, setProgress] = useState<Progress>({
-    candidateCount: 0,
-    memberCount: 0,
-    fullBallots: 0,
-    myIsFull: false,
+    candidateCount: 0, memberCount: 0, fullBallots: 0, myIsFull: false,
   });
 
-  // UX/errors
+  // UX
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
-  // Derived: merge DB members with presence-only users
+  // derived members list
   const displayMembers = useMemo(() => {
     const byId = new Map(members.map(m => [m.user_id, { ...m }]));
     for (const [uid, info] of Object.entries(presenceMap)) {
@@ -76,7 +136,7 @@ export default function LobbyPage() {
     });
   }, [members, presenceMap]);
 
-  // --- Data loaders ---
+  /* ---------- data loaders ---------- */
   async function loadCandidates(): Promise<Candidate[]> {
     setErr(null);
     const res = await fetch(`/api/lobbies/${lobbyId}/candidates`, { cache: 'no-store' });
@@ -85,28 +145,23 @@ export default function LobbyPage() {
     setCands(json.candidates);
     return json.candidates as Candidate[];
   }
-
   async function loadMyRanking() {
     const res = await fetch(`/api/lobbies/${lobbyId}/rankings`, { cache: 'no-store' });
     const json = await res.json();
-    if (res.ok && Array.isArray(json.ranking) && json.ranking.length) {
-      setOrder(json.ranking);
-    }
+    if (res.ok && Array.isArray(json.ranking) && json.ranking.length) setOrder(json.ranking);
   }
-
   async function loadMembersOnce() {
     const res = await fetch(`/api/lobbies/${lobbyId}/members`, { cache: 'no-store' });
     const json = await res.json();
     if (res.ok) setMembers(json.members);
   }
-
   async function loadProgress() {
     const res = await fetch(`/api/lobbies/${lobbyId}/progress`, { cache: 'no-store' });
     const json = await res.json();
     if (res.ok) setProgress(json);
   }
 
-  // --- Init: join lobby, prime data, wire realtime (members + presence) ---
+  /* ---------- init: join + realtime ---------- */
   useEffect(() => {
     let mounted = true;
 
@@ -117,8 +172,7 @@ export default function LobbyPage() {
 
     (async () => {
       const joinRes = await fetch(`/api/lobbies/${lobbyId}/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname: myName || undefined }),
       });
       const joinJson = await joinRes.json();
@@ -132,11 +186,9 @@ export default function LobbyPage() {
       await loadMembersOnce();
       await loadProgress();
 
-      // who am I
       const me = await fetch('/api/me').then(r => r.json());
       if (mounted) setUserId(me.userId);
 
-      // realtime: members
       membersChannel = supabase
         .channel(`lobby:${lobbyId}:members`)
         .on(
@@ -146,7 +198,6 @@ export default function LobbyPage() {
         )
         .subscribe();
 
-      // presence
       presenceChannel = supabase.channel(`presence:lobby:${lobbyId}`, { config: { presence: { key: me.userId } } });
       presenceChannel
         .on('presence', { event: 'sync' }, () => {
@@ -167,7 +218,6 @@ export default function LobbyPage() {
       });
       presenceChannelRef.current = presenceChannel;
 
-      // fallback poll
       pollTimer = setInterval(async () => { await loadMembersOnce(); await loadProgress(); }, 7000);
     })();
 
@@ -180,14 +230,12 @@ export default function LobbyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyId]);
 
-  // If no saved order yet, follow candidates list order
+  // first-time order from candidates
   useEffect(() => {
-    if (cands.length && order.length === 0) {
-      setOrder(cands.map(c => c.id));
-    }
+    if (cands.length && order.length === 0) setOrder(cands.map(c => c.id));
   }, [cands, order.length]);
 
-  // realtime: candidates
+  // realtime candidates
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase
@@ -207,12 +255,11 @@ export default function LobbyPage() {
         });
       })
       .subscribe();
-
     return () => { supabase.removeChannel(channel); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyId]);
 
-  // realtime: rankings -> progress
+  // realtime rankings -> progress
   useEffect(() => {
     const supabase = createClient();
     const ch = supabase
@@ -221,25 +268,11 @@ export default function LobbyPage() {
         event: '*', schema: 'public', table: 'rankings', filter: `lobby_id=eq.${lobbyId}`,
       }, () => { loadProgress(); })
       .subscribe();
-
     return () => { supabase.removeChannel(ch); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyId]);
 
-  // --- Actions ---
-  function onDragEnd(result: DropResult) {
-    const { source, destination } = result;
-    if (!destination) return;
-    if (source.index === destination.index) return;
-
-    setOrder(prev => {
-      const next = prev.slice();
-      const [moved] = next.splice(source.index, 1);
-      next.splice(destination.index, 0, moved);
-      return next;
-    });
-  }
-
+  /* ---------- actions ---------- */
   async function addCandidate() {
     setErr(null);
     if (!newTitle.trim()) { setErr('Enter a title'); return; }
@@ -262,7 +295,6 @@ export default function LobbyPage() {
       });
     } finally { setLoading(false); }
   }
-
   function move(idx: number, dir: -1 | 1) {
     setOrder(prev => {
       const next = prev.slice();
@@ -272,7 +304,6 @@ export default function LobbyPage() {
       return next;
     });
   }
-
   async function saveRanking() {
     setErr(null); setSaveMsg(null);
     if (!order.length) { setErr('No ranking to save'); return; }
@@ -287,7 +318,6 @@ export default function LobbyPage() {
       await loadProgress();
     } finally { setSaving(false); }
   }
-
   async function deleteCandidate(cid: string) {
     if (!isHost) { setNote('Host only'); return; }
     const ok = window.confirm('Delete this title for everyone?');
@@ -296,39 +326,48 @@ export default function LobbyPage() {
     const json = await res.json().catch(() => ({}));
     if (!res.ok) setErr((json as { error?: string }).error ?? 'delete failed');
   }
-
   async function regenerateCode() {
     if (!isHost) { setNote('Host only'); return; }
     const ok = window.confirm('Regenerate invite code? Old link will stop working.');
     if (!ok) return;
     const res = await fetch(`/api/lobbies/${lobbyId}/code`, { method: 'POST' });
     const json = await res.json();
-    if (res.ok) { setShortCode(json.code); alert('New short link copied to clipboard? Click copy again if needed.'); }
+    if (res.ok) { setShortCode(json.code); alert('New short code generated. Use “Copy short link”.'); }
     else setErr(json.error ?? 'could not regenerate code');
+  }
+
+  function onDragEnd(result: DropResult) {
+    const { source, destination } = result;
+    if (!destination) return;
+    if (source.index === destination.index) return;
+    setOrder(prev => {
+      const next = prev.slice();
+      const [moved] = next.splice(source.index, 1);
+      next.splice(destination.index, 0, moved);
+      return next;
+    });
   }
 
   const byId = useMemo(() => new Map(cands.map(c => [c.id, c])), [cands]);
   const canFinalize = progress.candidateCount > 0 && progress.fullBallots > 0;
 
+  /* ---------- UI ---------- */
   return (
-    <main className="min-h-screen flex items-start justify-center">
-      <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-3 gap-8 p-6">
-        {/* Left: inputs & lists */}
-        <div className="md:col-span-2 space-y-6">
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold">Lobby: {lobbyId.slice(0, 8)}…</h1>
-
-            <button
+    <main className="mx-auto max-w-6xl px-4 py-8 space-y-6">
+      {/* header card: lobby + links */}
+      <Card
+        title={<div className="text-xl font-semibold">Lobby: {lobbyId.slice(0, 8)}…</div>}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
               onClick={async () => {
                 try { await navigator.clipboard.writeText(window.location.href); alert('Link copied!'); }
                 catch { alert('Copy failed—copy from the address bar.'); }
               }}
-              className="rounded border px-2 py-1 text-sm hover:bg-gray-50"
             >
               Copy invite link
-            </button>
-
-            <button
+            </Button>
+            <Button
               disabled={!shortCode}
               onClick={async () => {
                 if (!shortCode) return;
@@ -336,85 +375,85 @@ export default function LobbyPage() {
                 try { await navigator.clipboard.writeText(shortUrl); alert('Short link copied!'); }
                 catch { alert(shortUrl); }
               }}
-              className="rounded border px-2 py-1 text-sm hover:bg-gray-50 disabled:opacity-50"
             >
               Copy short link
-            </button>
-
+            </Button>
             {isHost && (
-              <button
-                onClick={regenerateCode}
-                className="rounded border px-2 py-1 text-sm hover:bg-gray-50"
-                title="Host only"
-              >
+              <Button onClick={regenerateCode} title="Host only">
                 Regenerate code
-              </button>
+              </Button>
             )}
           </div>
+        }
+      >
+        <div className="text-sm text-gray-400">
+          Full ballots: <span className="font-semibold text-gray-200">{progress.fullBallots}</span> / {progress.memberCount} · Candidates: {progress.candidateCount}
+        </div>
+      </Card>
 
-          {/* Add candidate */}
-          <section className="space-y-2">
-            <h2 className="font-semibold">Add candidate</h2>
-            <div className="flex gap-2">
-              <input
-                className="flex-1 rounded border px-3 py-2"
-                placeholder="Movie title, e.g., Dune (2021)"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addCandidate()}
-              />
-              <button
-                onClick={addCandidate}
-                disabled={loading}
-                className="rounded border px-3 py-2 hover:bg-gray-50 disabled:opacity-50"
-              >
-                {loading ? 'Adding…' : 'Add'}
-              </button>
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        {/* left column: add + ranking */}
+        <div className="md:col-span-2 space-y-6">
+          {/* Add Candidate + You */}
+          <Card title="Add candidate" subtitle="Suggest a movie">
+            <div className="flex flex-col gap-3">
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Movie title, e.g., Dune (2021)"
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addCandidate()}
+                />
+                <Button onClick={addCandidate} disabled={loading}>
+                  {loading ? 'Adding…' : 'Add'}
+                </Button>
+              </div>
+
+              <div className="h-px w-full bg-white/10 my-1" />
+
+              <div>
+                <div className="mb-2 text-sm font-medium">You</div>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Your name (optional)"
+                    value={myName}
+                    onChange={(e) => setMyName(e.target.value)}
+                    onKeyDown={async (e) => {
+                      if (e.key === 'Enter') {
+                        saveName(myName);
+                        await fetch(`/api/lobbies/${lobbyId}/join`, {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ nickname: myName || undefined }),
+                        });
+                        const chan = presenceChannelRef.current;
+                        if (chan) { try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {} }
+                      }
+                    }}
+                  />
+                  <Button
+                    onClick={async () => {
+                      saveName(myName);
+                      await fetch(`/api/lobbies/${lobbyId}/join`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ nickname: myName || undefined }),
+                      });
+                      const chan = presenceChannelRef.current;
+                      if (chan) { try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {} }
+                    }}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+
+              {err && <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-2 text-sm text-red-300">{err}</div>}
             </div>
-          </section>
+          </Card>
 
-          {/* You / nickname */}
-          <section className="space-y-2">
-            <h2 className="font-semibold">You</h2>
-            <div className="flex gap-2">
-              <input
-                className="rounded border px-3 py-2"
-                placeholder="Your name (optional)"
-                value={myName}
-                onChange={(e) => setMyName(e.target.value)}
-                onKeyDown={async (e) => {
-                  if (e.key === 'Enter') {
-                    saveName(myName);
-                    await fetch(`/api/lobbies/${lobbyId}/join`, {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ nickname: myName || undefined }),
-                    });
-                    const chan = presenceChannelRef.current;
-                    if (chan) { try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {} }
-                  }
-                }}
-              />
-              <button
-                className="rounded border px-3 py-2 hover:bg-gray-50"
-                onClick={async () => {
-                  saveName(myName);
-                  await fetch(`/api/lobbies/${lobbyId}/join`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ nickname: myName || undefined }),
-                  });
-                  const chan = presenceChannelRef.current;
-                  if (chan) { try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {} }
-                }}
-              >
-                Save
-              </button>
-            </div>
-          </section>
-
-          {/* Your ranking (host can delete titles) */}
-          <section className="space-y-2">
-            <h2 className="font-semibold">Your ranking</h2>
+          {/* Ranking with DnD */}
+          <Card title="Your ranking" subtitle="Drag to reorder; keyboard ↑/↓ works too">
             {!order.length && <div className="text-gray-500">No items to rank yet</div>}
+
             <DragDropContext onDragEnd={onDragEnd}>
               <Droppable droppableId="rankingList" direction="vertical">
                 {(dropProvided) => (
@@ -426,7 +465,6 @@ export default function LobbyPage() {
                     {order.map((cid, idx) => {
                       const c = byId.get(cid);
                       if (!c) return null;
-
                       return (
                         <Draggable key={cid} draggableId={cid} index={idx}>
                           {(dragProvided, snapshot) => (
@@ -438,63 +476,47 @@ export default function LobbyPage() {
                               className={`flex items-center gap-2 rounded border px-3 py-2 transition
                                 ${snapshot.isDragging ? 'shadow-md ring-1 ring-black/10 bg-white/70 dark:bg-zinc-900/70' : ''}`}
                             >
-                              {/* optional grip icon for affordance */}
                               <span className="px-1 text-gray-500 select-none" aria-hidden>≡</span>
-
                               <span className="text-sm text-gray-600 w-8">#{idx + 1}</span>
                               <span className="flex-1">{c.title}</span>
-
-                              {/* keep keyboard fallback */}
                               <div className="flex gap-1">
-                                <button type="button" onClick={() => move(idx, -1)} className="rounded border px-2 py-1 hover:bg-gray-50">↑</button>
-                                <button type="button" onClick={() => move(idx, +1)} className="rounded border px-2 py-1 hover:bg-gray-50">↓</button>
-                                {/* host delete button stays if you have it */}
+                                <Button onClick={() => move(idx, -1)}>↑</Button>
+                                <Button onClick={() => move(idx, +1)}>↓</Button>
+                                {isHost && (
+                                  <Button onClick={() => deleteCandidate(cid)} title="Delete for everyone (host)">🗑</Button>
+                                )}
                               </div>
                             </li>
                           )}
                         </Draggable>
                       );
                     })}
-
                     {dropProvided.placeholder}
                   </ul>
                 )}
               </Droppable>
             </DragDropContext>
 
-
-            <button
-              onClick={saveRanking}
-              disabled={saving || !order.length}
-              className="rounded border px-3 py-2 hover:bg-gray-50 disabled:opacity-50"
-            >
-              {saving ? 'Saving…' : 'Save ranking'}
-            </button>
-
-            {saveMsg && <div className="text-green-700">{saveMsg}</div>}
-            {note && <div className="text-xs text-gray-500">{note}</div>}
-          </section>
-
-          {err && <div className="p-3 rounded border bg-red-50 text-red-700">{err}</div>}
+            <div className="mt-3">
+              <Button onClick={saveRanking} disabled={saving || !order.length}>
+                {saving ? 'Saving…' : 'Save ranking'}
+              </Button>
+              {saveMsg && <span className="ml-3 text-green-400">{saveMsg}</span>}
+              {note && <span className="ml-3 text-gray-400">{note}</span>}
+            </div>
+          </Card>
         </div>
 
-        {/* Right: finalize + members */}
+        {/* right column: finalize + members */}
         <div className="space-y-6">
-          <section className="space-y-2">
-            <h2 className="font-semibold">Finalize</h2>
-            <div className="text-sm text-gray-500">
-              Full ballots: <span className="font-semibold">{progress.fullBallots}</span> / {progress.memberCount} · Candidates: {progress.candidateCount}
-            </div>
-            <FinalizePanel
-              lobbyId={lobbyId}
-              cands={cands}
-              canFinalize={progress.candidateCount > 0 && progress.fullBallots > 0}
-              isHost={isHost}
-            />
-          </section>
+          <FinalizeCard
+            lobbyId={lobbyId}
+            cands={cands}
+            canFinalize={canFinalize}
+            isHost={isHost}
+          />
 
-          <section className="space-y-2">
-            <h2 className="font-semibold">Members</h2>
+          <Card title="Members" subtitle="Who’s here">
             {!displayMembers.length && <div className="text-gray-500">Nobody here yet</div>}
             <ul className="space-y-1">
               {displayMembers.map((m) => (
@@ -507,14 +529,15 @@ export default function LobbyPage() {
                 </li>
               ))}
             </ul>
-          </section>
+          </Card>
         </div>
       </div>
     </main>
   );
 }
 
-function FinalizePanel({
+/* ---------- Finalize + AI rationale card ---------- */
+function FinalizeCard({
   lobbyId,
   cands,
   canFinalize,
@@ -529,8 +552,6 @@ function FinalizePanel({
   const [err, setErr] = useState<string | null>(null);
   const [winner, setWinner] = useState<string | null>(null);
   const [scores, setScores] = useState<Record<string, number> | null>(null);
-
-  // AI rationale
   const [rationale, setRationale] = useState<string | null>(null);
   const [rBusy, setRBusy] = useState(false);
   const [rErr, setRErr] = useState<string | null>(null);
@@ -545,7 +566,6 @@ function FinalizePanel({
       setWinner(r?.winner_candidate_id ?? null);
       setScores(r?.scores ?? null);
 
-      // Try to fetch any existing rationale
       try {
         const rres = await fetch(`/api/lobbies/${lobbyId}/rationale`, { method: 'GET', cache: 'no-store' });
         const rjson = await rres.json();
@@ -553,7 +573,6 @@ function FinalizePanel({
       } catch { /* ignore */ }
     } finally { setBusy(false); }
   }
-
   const winnerTitle = winner && cands?.find(c => c.id === winner)?.title;
 
   async function generateRationale() {
@@ -569,30 +588,23 @@ function FinalizePanel({
   const disabled = busy || !canFinalize || !isHost;
 
   return (
-    <div className="space-y-2">
-      <button
-        onClick={finalize}
-        disabled={disabled}
-        className="rounded border px-3 py-2 hover:bg-gray-50 disabled:opacity-50"
-        title={isHost ? undefined : 'Host only'}
-      >
-        {busy ? 'Finalizing…' : 'Finalize & Compute Winner'}
-      </button>
-      {!canFinalize && <div className="text-xs text-gray-500">Need at least one complete ballot.</div>}
-      {!isHost && <div className="text-xs text-gray-500">Host only.</div>}
-
-      {err && <div className="p-2 rounded border bg-red-50 text-red-700">{err}</div>}
+    <Card
+      title="Finalize"
+      subtitle="Compute the winner"
+      actions={
+        <Button onClick={finalize} disabled={disabled} title={isHost ? undefined : 'Host only'}>
+          {busy ? 'Finalizing…' : 'Finalize & Compute'}
+        </Button>
+      }
+    >
+      {!canFinalize && <div className="text-sm text-gray-500">Need at least one complete ballot.</div>}
+      {!isHost && <div className="text-sm text-gray-500">Host only.</div>}
+      {err && <div className="mt-2 rounded border border-red-400/30 bg-red-500/10 p-2 text-red-300">{err}</div>}
 
       {winner && (
-        <div className="
-          p-3 rounded border
-          border-emerald-600/30
-          bg-emerald-100 text-emerald-900
-          dark:bg-emerald-900/30 dark:text-emerald-100
-          space-y-3
-        ">
+        <div className="mt-3 space-y-3 rounded-lg border border-emerald-600/30 bg-emerald-500/10 p-3">
           <div>
-            <div className="font-semibold text-emerald-800 dark:text-emerald-200">Winner:</div>
+            <div className="font-semibold">Winner</div>
             <div className="mt-1">
               {winnerTitle && <div className="font-medium">{winnerTitle}</div>}
               <div className="text-xs opacity-75 font-mono break-all">{winner}</div>
@@ -601,36 +613,29 @@ function FinalizePanel({
 
           {scores && (
             <div>
-              <div className="font-semibold text-emerald-800 dark:text-emerald-200">Scores</div>
+              <div className="font-semibold">Scores</div>
               <pre className="text-xs rounded border bg-black/5 dark:bg-white/10 p-2 overflow-auto">
                 {JSON.stringify(scores, null, 2)}
               </pre>
             </div>
           )}
 
-          <div className="pt-2 border-t border-emerald-600/20 dark:border-emerald-300/10">
-            <div className="flex items-center justify-between">
-              <div className="font-semibold text-emerald-800 dark:text-emerald-200">AI Rationale</div>
-              <button
-                onClick={generateRationale}
-                disabled={rBusy || !isHost}
-                className="rounded border px-2 py-1 text-sm hover:bg-gray-50 disabled:opacity-50"
-                title={isHost ? undefined : 'Host only'}
-              >
+          <div className="pt-2 border-t border-emerald-600/20">
+            <div className="mb-1 flex items-center justify-between">
+              <div className="font-semibold">AI Rationale</div>
+              <Button onClick={generateRationale} disabled={rBusy || !isHost} title={isHost ? undefined : 'Host only'}>
                 {rBusy ? 'Generating…' : (rationale ? 'Regenerate' : 'Generate')}
-              </button>
+              </Button>
             </div>
-            {rErr && <div className="mt-2 p-2 rounded border bg-red-50 text-red-700">{rErr}</div>}
+            {rErr && <div className="mt-1 rounded border border-red-400/30 bg-red-500/10 p-2 text-red-300">{rErr}</div>}
             {rationale ? (
               <p className="mt-2 text-sm leading-relaxed">{rationale}</p>
             ) : (
-              <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
-                {isHost ? 'Click “Generate” to produce a short, friendly blurb (cached).' : 'Host can generate a short blurb after finalizing.'}
-              </p>
+              <p className="mt-2 text-sm text-gray-500">Host can generate a short, friendly blurb (cached).</p>
             )}
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
