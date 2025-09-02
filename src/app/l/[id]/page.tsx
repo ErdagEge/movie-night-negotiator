@@ -19,20 +19,23 @@ function Card({
   actions,
   children,
   className = '',
+  frost = true,
 }: {
   title?: ReactNode;
   subtitle?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
+  frost?: boolean;
 }) {
+  const base =
+    'rounded-2xl border shadow-lg ' +
+    'border-white/10 ' +
+    (frost ? 'bg-white/5 backdrop-blur-sm ' : 'bg-white/5 '); // no backdrop filter when flat
+
   return (
     <section
-      className={
-        'rounded-2xl border border-white/10 bg-white/5 shadow-lg backdrop-blur-sm ' +
-        'dark:border-white/10 dark:bg-white/5 ' + className
-      }
-    >
+      className={base + className}>
       {(title || subtitle || actions) && (
         <header className="flex items-start justify-between gap-3 px-5 pt-5">
           <div>
@@ -461,7 +464,7 @@ export default function LobbyPage() {
           </Card>
 
           {/* Ranking with DnD */}
-          <Card title="Your ranking" subtitle="Drag to reorder; keyboard ↑/↓ works too">
+          <Card title="Your ranking" subtitle="Drag to reorder; keyboard ↑/↓ works too" frost={false}>
             {!order.length && <div className="text-gray-500">No items to rank yet</div>}
 
             <DragDropContext onDragEnd={onDragEnd}>
