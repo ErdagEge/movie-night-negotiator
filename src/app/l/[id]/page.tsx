@@ -322,9 +322,19 @@ export default function LobbyPage() {
     if (!isHost) { setNote('Host only'); return; }
     const ok = window.confirm('Delete this title for everyone?');
     if (!ok) return;
+
     const res = await fetch(`/api/lobbies/${lobbyId}/candidates/${cid}`, { method: 'DELETE' });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) setErr((json as { error?: string }).error ?? 'delete failed');
+
+    if (!res.ok) {
+      setErr((json as { error?: string }).error ?? 'delete failed');
+      return;
+    }
+
+    // Refresh candidates + progress and remove from local order
+    const updated = await loadCandidates();
+    await loadProgress();
+    setOrder(prev => prev.filter(id => updated.some(c => c.id === id)));
   }
   async function regenerateCode() {
     if (!isHost) { setNote('Host only'); return; }
