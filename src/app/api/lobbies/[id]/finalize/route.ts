@@ -132,3 +132,73 @@ export async function POST(
     },
   });
 }
+
+export async function GET(
+  _req: Request,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  const { id } = await ctx.params;
+  const supabase = await createServerClient();
+
+  // Has a result been stored?
+  const { data: resRow, error: resErr } = await supabase
+    .from('results')
+    .select('lobby_id, winner_candidate_id, scores')
+    .eq('lobby_id', id)
+    .maybeSingle();
+
+  if (resErr) return NextResponse.json({ error: resErr.message }, { status: 500 });
+  if (!resRow) return NextResponse.json({ error: 'no result' }, { status: 404 });
+
+  // For details, we recompute histograms + voter listings from current data
+  const [{ data: cands, error: cErr }, { data: ranks, error: rErr }, { data: members, error: mErr }] = await Promise.all([
+    supabase.from('candidates').select('id,title').eq('lobby_id', id),
+    supabase.from('rankings').select('user_id,candidate_id,position').eq('lobby_id', id),
+    supabase.from('lobby_members').select('user_id,nickname').eq('lobby_id', id),
+  ]);
+  if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 });
+  if (rErr) return NextResponse.json({ error: rErr.message }, { status: 500 });
+  if (mErr) return NextResponse.json({ error: mErr.message }, { status: 500 });
+
+  const candidates = (cands ?? []) as { id: string; title: string }[];
+  const candidateIds = candidates.map(c => c.id);
+  const rankings = (ranks ?? []) as Array<{ user_id: string; candidate_id: string; position: number }>;
+
+  // reuse helpers from file
+  const { scores: computedScores, hist } = computeBorda(rankings, candidateIds);
+
+  // Build details payload to mirror POST
+  const byId = new Map(candidates.map(c => [c.id, c.title]));
+  const ranked = candidateIds
+    .map((cid) => ({ id: cid, score: (resRow.scores ?? computedScores)[cid] ?? 0, hist: hist[cid] }))
+    .sort(cmpWithTiebreak);
+
+  const detailsCandidates = ranked.map(r => ({
+    id: r.id,
+    title: byId.get(r.id) ?? r.id,
+    score: r.score,
+    firsts: r.hist[1] ?? 0,
+    histogram: r.hist.slice(1),
+  }));
+
+  const grouped: Record<string, Array<{ candidate_id: string; position: number }>> = {};
+  for (const row of rankings) {
+    (grouped[row.user_id] ||= []).push({ candidate_id: row.candidate_id, position: row.position });
+  }
+  const nickByUser = new Map((members ?? []).map(m => [m.user_id, m.nickname as string | null]));
+  const detailsVoters = Object.entries(grouped).map(([uid, arr]) => {
+    arr.sort((a, b) => a.position - b.position);
+    return { user_id: uid, nickname: nickByUser.get(uid) ?? null, ranking: arr.map(x => x.candidate_id) };
+  });
+
+  return NextResponse.json({
+    result: resRow,
+    details: {
+      method: 'borda',
+      tie_breaker: 'lexicographic_positions_then_id',
+      ranked_ids: ranked.map(r => r.id),
+      candidates: detailsCandidates,
+      voters: detailsVoters,
+    },
+  });
+}

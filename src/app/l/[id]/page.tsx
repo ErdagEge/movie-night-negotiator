@@ -29,21 +29,14 @@ function Card({
   frost?: boolean;
 }) {
   const base =
-    'rounded-2xl border shadow-lg ' +
-    'border-white/10 ' +
-    (frost ? 'bg-white/5 backdrop-blur-sm ' : 'bg-white/5 '); // no backdrop filter when flat
-
+    'rounded-2xl border shadow-lg border-white/10 ' +
+    (frost ? 'bg-white/5 backdrop-blur-sm ' : 'bg-white/5 ');
   return (
-    <section
-      className={base + className}>
+    <section className={base + className}>
       {(title || subtitle || actions) && (
         <header className="flex items-start justify-between gap-3 px-5 pt-5">
           <div>
-            {typeof title === 'string' ? (
-              <h2 className="text-lg font-semibold">{title}</h2>
-            ) : (
-              title
-            )}
+            {typeof title === 'string' ? <h2 className="text-lg font-semibold">{title}</h2> : title}
             {subtitle && <p className="mt-1 text-sm text-gray-500">{subtitle}</p>}
           </div>
           {actions && <div className="shrink-0">{actions}</div>}
@@ -83,7 +76,9 @@ function getSavedName() {
   return localStorage.getItem('mn_name') || '';
 }
 function saveName(n: string) {
-  try { localStorage.setItem('mn_name', n); } catch {}
+  try {
+    localStorage.setItem('mn_name', n);
+  } catch {}
 }
 
 export default function LobbyPage() {
@@ -105,14 +100,23 @@ export default function LobbyPage() {
   const [presenceMap, setPresenceMap] = useState<Record<string, { nickname?: string }>>({});
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
 
+  // broadcast fallback
+  const broadcastChannelRef = useRef<RealtimeChannel | null>(null);
+
   // role + short link
   const [isHost, setIsHost] = useState(false);
   const [shortCode, setShortCode] = useState<string | null>(null);
 
   // progress
   const [progress, setProgress] = useState<Progress>({
-    candidateCount: 0, memberCount: 0, fullBallots: 0, myIsFull: false,
+    candidateCount: 0,
+    memberCount: 0,
+    fullBallots: 0,
+    myIsFull: false,
   });
+
+  // results: tick to trigger reloads for everyone when results change
+  const [resultTick, setResultTick] = useState(0);
 
   // UX
   const [loading, setLoading] = useState(false);
@@ -144,7 +148,10 @@ export default function LobbyPage() {
     setErr(null);
     const res = await fetch(`/api/lobbies/${lobbyId}/candidates`, { cache: 'no-store' });
     const json = await res.json();
-    if (!res.ok) { setErr(json.error ?? 'failed to load candidates'); return []; }
+    if (!res.ok) {
+      setErr(json.error ?? 'failed to load candidates');
+      return [];
+    }
     setCands(json.candidates);
     return json.candidates as Candidate[];
   }
@@ -171,11 +178,16 @@ export default function LobbyPage() {
     const supabase = createClient();
     let membersChannel: RealtimeChannel | null = null;
     let presenceChannel: RealtimeChannel | null = null;
+    let candidatesChannel: RealtimeChannel | null = null;
+    let rankingsChannel: RealtimeChannel | null = null;
+    let resultsChannel: RealtimeChannel | null = null;
+    let broadcastChannel: RealtimeChannel | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
 
     (async () => {
       const joinRes = await fetch(`/api/lobbies/${lobbyId}/join`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname: myName || undefined }),
       });
       const joinJson = await joinRes.json();
@@ -197,7 +209,11 @@ export default function LobbyPage() {
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'lobby_members', filter: `lobby_id=eq.${lobbyId}` },
-          async () => { if (!mounted) return; await loadMembersOnce(); await loadProgress(); }
+          async () => {
+            if (!mounted) return;
+            await loadMembersOnce();
+            await loadProgress();
+          }
         )
         .subscribe();
 
@@ -221,14 +237,113 @@ export default function LobbyPage() {
       });
       presenceChannelRef.current = presenceChannel;
 
-      pollTimer = setInterval(async () => { await loadMembersOnce(); await loadProgress(); }, 7000);
+      // realtime: candidates
+      candidatesChannel = supabase
+        .channel(`lobby:${lobbyId}:candidates`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'candidates', filter: `lobby_id=eq.${lobbyId}` },
+          async () => {
+            const updated = await loadCandidates();
+            await loadProgress();
+            setOrder(prev => {
+              const ids = updated.map(c => c.id);
+              if (prev.length === 0) return ids;
+              const prevSet = new Set(prev);
+              const appended = ids.filter(id2 => !prevSet.has(id2));
+              const kept = prev.filter(id2 => ids.includes(id2));
+              return appended.length ? [...kept, ...appended] : kept;
+            });
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'candidates', filter: `lobby_id=eq.${lobbyId}` },
+          async () => {
+            await loadCandidates();
+            await loadProgress();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'candidates', filter: `lobby_id=eq.${lobbyId}` },
+          async () => {
+            const updated = await loadCandidates();
+            await loadProgress();
+            setOrder(prev => prev.filter(id2 => updated.some(c => c.id === id2)));
+          }
+        )
+        .subscribe();
+
+      // realtime: rankings -> progress
+      rankingsChannel = supabase
+        .channel(`lobby:${lobbyId}:rankings`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'rankings', filter: `lobby_id=eq.${lobbyId}` },
+          () => {
+            loadProgress();
+          }
+        )
+        .subscribe();
+
+      // realtime: results — notify everyone to reload results
+      resultsChannel = supabase
+        .channel(`lobby:${lobbyId}:results`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'results', filter: `lobby_id=eq.${lobbyId}` },
+          () => setResultTick(t => t + 1)
+        )
+        .subscribe();
+
+      // broadcast fallback: instantly refresh candidates for all peers
+      broadcastChannel = supabase
+        .channel(`broadcast:lobby:${lobbyId}`, { config: { broadcast: { self: false } } })
+        .on('broadcast', { event: 'candidates_changed' }, async () => {
+          const updated = await loadCandidates();
+          await loadProgress();
+          setOrder(prev => {
+            const ids = updated.map(c => c.id);
+            if (prev.length === 0) return ids;
+            const prevSet = new Set(prev);
+            const appended = ids.filter(id2 => !prevSet.has(id2));
+            const kept = prev.filter(id2 => ids.includes(id2));
+            return appended.length ? [...kept, ...appended] : kept;
+          });
+        })
+        .subscribe();
+      broadcastChannelRef.current = broadcastChannel;
+
+      // fallback poll (gentle)
+      pollTimer = setInterval(async () => {
+        await Promise.all([loadMembersOnce(), loadProgress(), loadCandidates()]);
+      }, 7000);
     })();
 
     return () => {
       mounted = false;
       if (membersChannel) supabase.removeChannel(membersChannel);
       if (presenceChannel) supabase.removeChannel(presenceChannel);
+      if (candidatesChannel) supabase.removeChannel(candidatesChannel);
+      if (rankingsChannel) supabase.removeChannel(rankingsChannel);
+      if (resultsChannel) supabase.removeChannel(resultsChannel);
+      if (broadcastChannel) supabase.removeChannel(broadcastChannel);
       if (pollTimer) clearInterval(pollTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lobbyId]);
+
+  // refresh on focus (multi-tab resilience)
+  useEffect(() => {
+    function onFocus() {
+      Promise.all([loadCandidates(), loadProgress()]).catch(() => {});
+    }
+    window.addEventListener('visibilitychange', onFocus);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('visibilitychange', onFocus);
+      window.removeEventListener('focus', onFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyId]);
@@ -238,66 +353,49 @@ export default function LobbyPage() {
     if (cands.length && order.length === 0) setOrder(cands.map(c => c.id));
   }, [cands, order.length]);
 
-  // realtime candidates
-  useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase
-      .channel(`lobby:${lobbyId}:candidates`)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'candidates', filter: `lobby_id=eq.${lobbyId}`,
-      }, async () => {
-        const updated = await loadCandidates();
-        await loadProgress();
-        setOrder(prev => {
-          const ids = updated.map(c => c.id);
-          if (prev.length === 0) return ids;
-          const prevSet = new Set(prev);
-          const appended = ids.filter(id => !prevSet.has(id));
-          const kept = prev.filter(id => ids.includes(id));
-          return appended.length ? [...kept, ...appended] : kept;
-        });
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lobbyId]);
-
-  // realtime rankings -> progress
-  useEffect(() => {
-    const supabase = createClient();
-    const ch = supabase
-      .channel(`lobby:${lobbyId}:rankings`)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'rankings', filter: `lobby_id=eq.${lobbyId}`,
-      }, () => { loadProgress(); })
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lobbyId]);
-
   /* ---------- actions ---------- */
   async function addCandidate() {
     setErr(null);
-    if (!newTitle.trim()) { setErr('Enter a title'); return; }
+    if (!newTitle.trim()) {
+      setErr('Enter a title');
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`/api/lobbies/${lobbyId}/candidates`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle }),
       });
       const json = await res.json();
-      if (!res.ok) { setErr(json.error ?? 'add failed'); return; }
+      if (!res.ok) {
+        setErr(json.error ?? 'add failed');
+        return;
+      }
       setNewTitle('');
-      const updated = await loadCandidates(); await loadProgress();
+      const updated = await loadCandidates();
+      await loadProgress();
       setOrder(prev => {
         const updatedIds = updated.map(c => c.id);
         if (prev.length === 0) return updatedIds;
         const setPrev = new Set(prev);
-        const toAppend = updatedIds.filter(id => !setPrev.has(id));
+        const toAppend = updatedIds.filter(id2 => !setPrev.has(id2));
         return toAppend.length ? [...prev, ...toAppend] : prev;
       });
-    } finally { setLoading(false); }
+
+      // broadcast to peers so host/guests refresh instantly
+      try {
+        await broadcastChannelRef.current?.send({
+          type: 'broadcast',
+          event: 'candidates_changed',
+          payload: { lobbyId },
+        });
+      } catch {}
+    } finally {
+      setLoading(false);
+    }
   }
+
   function move(idx: number, dir: -1 | 1) {
     setOrder(prev => {
       const next = prev.slice();
@@ -307,46 +405,72 @@ export default function LobbyPage() {
       return next;
     });
   }
+
   async function saveRanking() {
-    setErr(null); setSaveMsg(null);
-    if (!order.length) { setErr('No ranking to save'); return; }
+    setErr(null);
+    setSaveMsg(null);
+    if (!order.length) {
+      setErr('No ranking to save');
+      return;
+    }
     setSaving(true);
     try {
       const res = await fetch(`/api/lobbies/${lobbyId}/rankings`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ranking: order }),
       });
       const json = await res.json();
-      if (!res.ok) setErr(json.error ?? 'save failed'); else setSaveMsg('Ranking saved ✅');
+      if (!res.ok) setErr(json.error ?? 'save failed');
+      else setSaveMsg('Ranking saved ✅');
       await loadProgress();
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   }
+
   async function deleteCandidate(cid: string) {
-    if (!isHost) { setNote('Host only'); return; }
+    if (!isHost) {
+      setNote('Host only');
+      return;
+    }
     const ok = window.confirm('Delete this title for everyone?');
     if (!ok) return;
 
     const res = await fetch(`/api/lobbies/${lobbyId}/candidates/${cid}`, { method: 'DELETE' });
     const json = await res.json().catch(() => ({}));
-
     if (!res.ok) {
       setErr((json as { error?: string }).error ?? 'delete failed');
       return;
     }
 
-    // Refresh candidates + progress and remove from local order
     const updated = await loadCandidates();
     await loadProgress();
-    setOrder(prev => prev.filter(id => updated.some(c => c.id === id)));
+    setOrder(prev => prev.filter(id2 => updated.some(c => c.id === id2)));
+
+    // broadcast deletion
+    try {
+      await broadcastChannelRef.current?.send({
+        type: 'broadcast',
+        event: 'candidates_changed',
+        payload: { lobbyId },
+      });
+    } catch {}
   }
+
   async function regenerateCode() {
-    if (!isHost) { setNote('Host only'); return; }
+    if (!isHost) {
+      setNote('Host only');
+      return;
+    }
     const ok = window.confirm('Regenerate invite code? Old link will stop working.');
     if (!ok) return;
     const res = await fetch(`/api/lobbies/${lobbyId}/code`, { method: 'POST' });
     const json = await res.json();
-    if (res.ok) { setShortCode(json.code); alert('New short code generated. Use “Copy short link”.'); }
-    else setErr(json.error ?? 'could not regenerate code');
+    if (res.ok) {
+      setShortCode(json.code);
+      alert('New short code generated. Use “Copy short link”.');
+    } else setErr(json.error ?? 'could not regenerate code');
   }
 
   function onDragEnd(result: DropResult) {
@@ -374,8 +498,12 @@ export default function LobbyPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Button
               onClick={async () => {
-                try { await navigator.clipboard.writeText(window.location.href); alert('Link copied!'); }
-                catch { alert('Copy failed—copy from the address bar.'); }
+                try {
+                  await navigator.clipboard.writeText(window.location.href);
+                  alert('Link copied!');
+                } catch {
+                  alert('Copy failed—copy from the address bar.');
+                }
               }}
             >
               Copy invite link
@@ -385,8 +513,12 @@ export default function LobbyPage() {
               onClick={async () => {
                 if (!shortCode) return;
                 const shortUrl = `${window.location.origin}/j/${shortCode}`;
-                try { await navigator.clipboard.writeText(shortUrl); alert('Short link copied!'); }
-                catch { alert(shortUrl); }
+                try {
+                  await navigator.clipboard.writeText(shortUrl);
+                  alert('Short link copied!');
+                } catch {
+                  alert(shortUrl);
+                }
               }}
             >
               Copy short link
@@ -435,11 +567,16 @@ export default function LobbyPage() {
                       if (e.key === 'Enter') {
                         saveName(myName);
                         await fetch(`/api/lobbies/${lobbyId}/join`, {
-                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ nickname: myName || undefined }),
                         });
                         const chan = presenceChannelRef.current;
-                        if (chan) { try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {} }
+                        if (chan) {
+                          try {
+                            await chan.track({ userId, nickname: myName || 'Guest' });
+                          } catch {}
+                        }
                       }
                     }}
                   />
@@ -447,11 +584,16 @@ export default function LobbyPage() {
                     onClick={async () => {
                       saveName(myName);
                       await fetch(`/api/lobbies/${lobbyId}/join`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ nickname: myName || undefined }),
                       });
                       const chan = presenceChannelRef.current;
-                      if (chan) { try { await chan.track({ userId, nickname: myName || 'Guest' }); } catch {} }
+                      if (chan) {
+                        try {
+                          await chan.track({ userId, nickname: myName || 'Guest' });
+                        } catch {}
+                      }
                     }}
                   >
                     Save
@@ -463,18 +605,14 @@ export default function LobbyPage() {
             </div>
           </Card>
 
-          {/* Ranking with DnD */}
+          {/* Ranking with DnD (flat card: no blur → smooth drag) */}
           <Card title="Your ranking" subtitle="Drag to reorder; keyboard ↑/↓ works too" frost={false}>
             {!order.length && <div className="text-gray-500">No items to rank yet</div>}
 
             <DragDropContext onDragEnd={onDragEnd}>
               <Droppable droppableId="rankingList" direction="vertical">
                 {(dropProvided) => (
-                  <ul
-                    ref={dropProvided.innerRef}
-                    {...dropProvided.droppableProps}
-                    className="space-y-1"
-                  >
+                  <ul ref={dropProvided.innerRef} {...dropProvided.droppableProps} className="space-y-1">
                     {order.map((cid, idx) => {
                       const c = byId.get(cid);
                       if (!c) return null;
@@ -489,14 +627,18 @@ export default function LobbyPage() {
                               className={`flex items-center gap-2 rounded border px-3 py-2 transition
                                 ${snapshot.isDragging ? 'shadow-md ring-1 ring-black/10 bg-white/70 dark:bg-zinc-900/70' : ''}`}
                             >
-                              <span className="px-1 text-gray-500 select-none" aria-hidden>≡</span>
+                              <span className="px-1 text-gray-500 select-none" aria-hidden>
+                                ≡
+                              </span>
                               <span className="text-sm text-gray-600 w-8">#{idx + 1}</span>
                               <span className="flex-1">{c.title}</span>
                               <div className="flex gap-1">
                                 <Button onClick={() => move(idx, -1)}>↑</Button>
                                 <Button onClick={() => move(idx, +1)}>↓</Button>
                                 {isHost && (
-                                  <Button onClick={() => deleteCandidate(cid)} title="Delete for everyone (host)">🗑</Button>
+                                  <Button onClick={() => deleteCandidate(cid)} title="Delete for everyone (host)">
+                                    🗑
+                                  </Button>
                                 )}
                               </div>
                             </li>
@@ -527,12 +669,13 @@ export default function LobbyPage() {
             cands={cands}
             canFinalize={canFinalize}
             isHost={isHost}
+            resultTick={resultTick}
           />
 
           <Card title="Members" subtitle="Who’s here">
             {!displayMembers.length && <div className="text-gray-500">Nobody here yet</div>}
             <ul className="space-y-1">
-              {displayMembers.map((m) => (
+              {displayMembers.map(m => (
                 <li key={m.user_id} className="flex items-center justify-between rounded border px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className={onlineIds.has(m.user_id) ? 'text-green-500' : 'text-gray-400'}>●</span>
@@ -549,17 +692,19 @@ export default function LobbyPage() {
   );
 }
 
-/* ---------- Finalize + AI rationale card ---------- */
+/* ---------- Finalize + AI rationale card (visible to all after host finalizes) ---------- */
 function FinalizeCard({
   lobbyId,
   cands,
   canFinalize,
   isHost,
+  resultTick,
 }: {
   lobbyId: string;
   cands?: { id: string; title: string }[];
   canFinalize: boolean;
   isHost: boolean;
+  resultTick: number;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -571,7 +716,7 @@ function FinalizeCard({
   const [rBusy, setRBusy] = useState(false);
   const [rErr, setRErr] = useState<string | null>(null);
 
-  // NEW: details
+  // details
   type DetailsCandidate = { id: string; title: string; score: number; firsts: number; histogram: number[] };
   type DetailsVoter = { user_id: string; nickname: string | null; ranking: string[] };
   const [details, setDetails] = useState<{
@@ -581,6 +726,27 @@ function FinalizeCard({
     candidates: DetailsCandidate[];
     voters: DetailsVoter[];
   } | null>(null);
+
+  // Load existing result for everyone (on mount and when result changes)
+  async function loadResult() {
+    const res = await fetch(`/api/lobbies/${lobbyId}/finalize`, { method: 'GET', cache: 'no-store' });
+    if (!res.ok) return; // no result yet
+    const json = await res.json();
+    const r = json.result;
+    setWinner(r?.winner_candidate_id ?? null);
+    setScores(r?.scores ?? null);
+    if (json.details) setDetails(json.details);
+
+    try {
+      const rres = await fetch(`/api/lobbies/${lobbyId}/rationale`, { method: 'GET', cache: 'no-store' });
+      const rjson = await rres.json();
+      if (rres.ok) setRationale(rjson?.rationale ?? null);
+    } catch {}
+  }
+  useEffect(() => {
+    loadResult();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lobbyId, resultTick]);
 
   async function finalize() {
     setBusy(true);
@@ -592,19 +758,20 @@ function FinalizeCard({
     try {
       const res = await fetch(`/api/lobbies/${lobbyId}/finalize`, { method: 'POST' });
       const json = await res.json();
-      if (!res.ok) { setErr(json.error ?? 'finalize failed'); return; }
-
+      if (!res.ok) {
+        setErr(json.error ?? 'finalize failed');
+        return;
+      }
       const r = json.result;
       setWinner(r?.winner_candidate_id ?? null);
       setScores(r?.scores ?? null);
       if (json.details) setDetails(json.details);
 
-      // fetch existing rationale if present
       try {
         const rres = await fetch(`/api/lobbies/${lobbyId}/rationale`, { method: 'GET', cache: 'no-store' });
         const rjson = await rres.json();
         if (rres.ok) setRationale(rjson?.rationale ?? null);
-      } catch { /* ignore */ }
+      } catch {}
     } finally {
       setBusy(false);
     }
@@ -613,13 +780,19 @@ function FinalizeCard({
   const winnerTitle = winner && cands?.find(c => c.id === winner)?.title;
 
   async function generateRationale() {
-    setRBusy(true); setRErr(null);
+    setRBusy(true);
+    setRErr(null);
     try {
       const res = await fetch(`/api/lobbies/${lobbyId}/rationale`, { method: 'POST' });
       const json = await res.json();
-      if (!res.ok) { setRErr(json.error ?? 'failed to generate'); return; }
+      if (!res.ok) {
+        setRErr(json.error ?? 'failed to generate');
+        return;
+      }
       setRationale(json.rationale ?? '');
-    } finally { setRBusy(false); }
+    } finally {
+      setRBusy(false);
+    }
   }
 
   const disabled = busy || !canFinalize || !isHost;
@@ -669,7 +842,7 @@ function FinalizeCard({
             <div className="mb-1 flex items-center justify-between">
               <div className="font-semibold">AI Rationale</div>
               <Button onClick={generateRationale} disabled={rBusy || !isHost} title={isHost ? undefined : 'Host only'}>
-                {rBusy ? 'Generating…' : (rationale ? 'Regenerate' : 'Generate')}
+                {rBusy ? 'Generating…' : rationale ? 'Regenerate' : 'Generate'}
               </Button>
             </div>
             {rErr && <div className="mt-1 rounded border border-red-400/30 bg-red-500/10 p-2 text-red-300">{rErr}</div>}
@@ -680,7 +853,7 @@ function FinalizeCard({
             )}
           </div>
 
-          {/* NEW: Scoring details (leaderboard + per-voter) */}
+          {/* Scoring details (leaderboard + per-voter) */}
           {details && (
             <div className="pt-3 border-t border-emerald-600/20 space-y-3">
               <div className="flex items-center justify-between">
@@ -721,9 +894,7 @@ function FinalizeCard({
               {/* Per-voter breakdown */}
               <div className="space-y-2">
                 <div className="font-semibold">Per-voter rankings</div>
-                {!details.voters.length && (
-                  <div className="text-sm text-gray-500">No saved ballots.</div>
-                )}
+                {!details.voters.length && <div className="text-sm text-gray-500">No saved ballots.</div>}
                 <ul className="space-y-1">
                   {details.voters.map(v => (
                     <li key={v.user_id} className="rounded border border-white/10 p-2">
