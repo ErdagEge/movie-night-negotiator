@@ -58,8 +58,6 @@ Pick a movie together. Create a lobby, everyone adds titles and ranks them, and 
 
 ## Roadmap
 
-- Drag-and-drop ranking
-- Host-only controls (finalize, regenerate code)
 - Auth + RLS (keep guest flow)
 - QR invites
 - Tests (Borda & API smoke)
