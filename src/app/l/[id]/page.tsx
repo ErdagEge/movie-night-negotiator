@@ -1,74 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
+import { Button, Card, Input } from '@/components/ui';
+import { FinalizeCard } from '@/components/FinalizeCard';
+import { RankingList } from '@/components/RankingList';
+import { LobbyMembers, type Member } from '@/components/LobbyMembers';
 
 type ChannelState = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR';
 
 type Candidate = { id: string; title: string; created_at: string; added_by: string | null };
-type Member = { user_id: string; role: string; nickname: string | null; joined_at?: string };
 type Progress = { candidateCount: number; memberCount: number; fullBallots: number; myIsFull: boolean };
-
-/* ---------- tiny UI primitives ---------- */
-function Card({
-  title,
-  subtitle,
-  actions,
-  children,
-  className = '',
-  frost = true,
-}: {
-  title?: ReactNode;
-  subtitle?: ReactNode;
-  actions?: ReactNode;
-  children: ReactNode;
-  className?: string;
-  frost?: boolean;
-}) {
-  const base =
-    'rounded-2xl border shadow-lg border-white/10 ' +
-    (frost ? 'bg-white/5 backdrop-blur-sm ' : 'bg-white/5 ');
-  return (
-    <section className={base + className}>
-      {(title || subtitle || actions) && (
-        <header className="flex items-start justify-between gap-3 px-5 pt-5">
-          <div>
-            {typeof title === 'string' ? <h2 className="text-lg font-semibold">{title}</h2> : title}
-            {subtitle && <p className="mt-1 text-sm text-gray-500">{subtitle}</p>}
-          </div>
-          {actions && <div className="shrink-0">{actions}</div>}
-        </header>
-      )}
-      <div className="px-5 py-4">{children}</div>
-    </section>
-  );
-}
-function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      {...props}
-      className={
-        'rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-50 ' +
-        (props.className ?? '')
-      }
-    />
-  );
-}
-function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      {...props}
-      className={
-        'w-full rounded-lg border border-white/15 bg-black/10 px-3 py-2 outline-none ' +
-        'placeholder:text-gray-500 focus:border-white/30 ' +
-        (props.className ?? '')
-      }
-    />
-  );
-}
 
 /* ---------- helpers ---------- */
 function getSavedName() {
@@ -396,16 +340,6 @@ export default function LobbyPage() {
     }
   }
 
-  function move(idx: number, dir: -1 | 1) {
-    setOrder(prev => {
-      const next = prev.slice();
-      const j = idx + dir;
-      if (j < 0 || j >= next.length) return prev;
-      [next[idx], next[j]] = [next[j], next[idx]];
-      return next;
-    });
-  }
-
   async function saveRanking() {
     setErr(null);
     setSaveMsg(null);
@@ -473,19 +407,6 @@ export default function LobbyPage() {
     } else setErr(json.error ?? 'could not regenerate code');
   }
 
-  function onDragEnd(result: DropResult) {
-    const { source, destination } = result;
-    if (!destination) return;
-    if (source.index === destination.index) return;
-    setOrder(prev => {
-      const next = prev.slice();
-      const [moved] = next.splice(source.index, 1);
-      next.splice(destination.index, 0, moved);
-      return next;
-    });
-  }
-
-  const byId = useMemo(() => new Map(cands.map(c => [c.id, c])), [cands]);
   const canFinalize = progress.candidateCount > 0 && progress.fullBallots > 0;
 
   /* ---------- UI ---------- */
@@ -605,61 +526,18 @@ export default function LobbyPage() {
             </div>
           </Card>
 
-          {/* Ranking with DnD (flat card: no blur → smooth drag) */}
-          <Card title="Your ranking" subtitle="Drag to reorder; keyboard ↑/↓ works too" frost={false}>
-            {!order.length && <div className="text-gray-500">No items to rank yet</div>}
-
-            <DragDropContext onDragEnd={onDragEnd}>
-              <Droppable droppableId="rankingList" direction="vertical">
-                {(dropProvided) => (
-                  <ul ref={dropProvided.innerRef} {...dropProvided.droppableProps} className="space-y-1">
-                    {order.map((cid, idx) => {
-                      const c = byId.get(cid);
-                      if (!c) return null;
-                      return (
-                        <Draggable key={cid} draggableId={cid} index={idx}>
-                          {(dragProvided, snapshot) => (
-                            <li
-                              ref={dragProvided.innerRef}
-                              {...dragProvided.draggableProps}
-                              {...dragProvided.dragHandleProps}
-                              style={dragProvided.draggableProps.style}
-                              className={`flex items-center gap-2 rounded border px-3 py-2 transition
-                                ${snapshot.isDragging ? 'shadow-md ring-1 ring-black/10 bg-white/70 dark:bg-zinc-900/70' : ''}`}
-                            >
-                              <span className="px-1 text-gray-500 select-none" aria-hidden>
-                                ≡
-                              </span>
-                              <span className="text-sm text-gray-600 w-8">#{idx + 1}</span>
-                              <span className="flex-1">{c.title}</span>
-                              <div className="flex gap-1">
-                                <Button onClick={() => move(idx, -1)}>↑</Button>
-                                <Button onClick={() => move(idx, +1)}>↓</Button>
-                                {isHost && (
-                                  <Button onClick={() => deleteCandidate(cid)} title="Delete for everyone (host)">
-                                    🗑
-                                  </Button>
-                                )}
-                              </div>
-                            </li>
-                          )}
-                        </Draggable>
-                      );
-                    })}
-                    {dropProvided.placeholder}
-                  </ul>
-                )}
-              </Droppable>
-            </DragDropContext>
-
-            <div className="mt-3">
-              <Button onClick={saveRanking} disabled={saving || !order.length}>
-                {saving ? 'Saving…' : 'Save ranking'}
-              </Button>
-              {saveMsg && <span className="ml-3 text-green-400">{saveMsg}</span>}
-              {note && <span className="ml-3 text-gray-400">{note}</span>}
-            </div>
-          </Card>
+          {/* Ranking with DnD */}
+          <RankingList
+            order={order}
+            setOrder={setOrder}
+            cands={cands}
+            isHost={isHost}
+            saveRanking={saveRanking}
+            saving={saving}
+            saveMsg={saveMsg}
+            note={note}
+            onDeleteCandidate={deleteCandidate}
+          />
         </div>
 
         {/* right column: finalize + members */}
@@ -672,249 +550,9 @@ export default function LobbyPage() {
             resultTick={resultTick}
           />
 
-          <Card title="Members" subtitle="Who’s here">
-            {!displayMembers.length && <div className="text-gray-500">Nobody here yet</div>}
-            <ul className="space-y-1">
-              {displayMembers.map(m => (
-                <li key={m.user_id} className="flex items-center justify-between rounded border px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <span className={onlineIds.has(m.user_id) ? 'text-green-500' : 'text-gray-400'}>●</span>
-                    <span>{m.nickname || 'Guest'}</span>
-                  </div>
-                  <span className="text-xs uppercase tracking-wide opacity-60">{m.role}</span>
-                </li>
-              ))}
-            </ul>
-          </Card>
+          <LobbyMembers members={displayMembers} onlineIds={onlineIds} />
         </div>
       </div>
     </main>
-  );
-}
-
-/* ---------- Finalize + AI rationale card (visible to all after host finalizes) ---------- */
-function FinalizeCard({
-  lobbyId,
-  cands,
-  canFinalize,
-  isHost,
-  resultTick,
-}: {
-  lobbyId: string;
-  cands?: { id: string; title: string }[];
-  canFinalize: boolean;
-  isHost: boolean;
-  resultTick: number;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [winner, setWinner] = useState<string | null>(null);
-  const [scores, setScores] = useState<Record<string, number> | null>(null);
-
-  // AI rationale
-  const [rationale, setRationale] = useState<string | null>(null);
-  const [rBusy, setRBusy] = useState(false);
-  const [rErr, setRErr] = useState<string | null>(null);
-
-  // details
-  type DetailsCandidate = { id: string; title: string; score: number; firsts: number; histogram: number[] };
-  type DetailsVoter = { user_id: string; nickname: string | null; ranking: string[] };
-  const [details, setDetails] = useState<{
-    method: 'borda';
-    tie_breaker: 'lexicographic_positions_then_id';
-    ranked_ids: string[];
-    candidates: DetailsCandidate[];
-    voters: DetailsVoter[];
-  } | null>(null);
-
-  // Load existing result for everyone (on mount and when result changes)
-  async function loadResult() {
-    const res = await fetch(`/api/lobbies/${lobbyId}/finalize`, { method: 'GET', cache: 'no-store' });
-    if (!res.ok) return; // no result yet
-    const json = await res.json();
-    const r = json.result;
-    setWinner(r?.winner_candidate_id ?? null);
-    setScores(r?.scores ?? null);
-    if (json.details) setDetails(json.details);
-
-    try {
-      const rres = await fetch(`/api/lobbies/${lobbyId}/rationale`, { method: 'GET', cache: 'no-store' });
-      const rjson = await rres.json();
-      if (rres.ok) setRationale(rjson?.rationale ?? null);
-    } catch {}
-  }
-  useEffect(() => {
-    loadResult();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lobbyId, resultTick]);
-
-  async function finalize() {
-    setBusy(true);
-    setErr(null);
-    setWinner(null);
-    setScores(null);
-    setRationale(null);
-    setDetails(null);
-    try {
-      const res = await fetch(`/api/lobbies/${lobbyId}/finalize`, { method: 'POST' });
-      const json = await res.json();
-      if (!res.ok) {
-        setErr(json.error ?? 'finalize failed');
-        return;
-      }
-      const r = json.result;
-      setWinner(r?.winner_candidate_id ?? null);
-      setScores(r?.scores ?? null);
-      if (json.details) setDetails(json.details);
-
-      try {
-        const rres = await fetch(`/api/lobbies/${lobbyId}/rationale`, { method: 'GET', cache: 'no-store' });
-        const rjson = await rres.json();
-        if (rres.ok) setRationale(rjson?.rationale ?? null);
-      } catch {}
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const winnerTitle = winner && cands?.find(c => c.id === winner)?.title;
-
-  async function generateRationale() {
-    setRBusy(true);
-    setRErr(null);
-    try {
-      const res = await fetch(`/api/lobbies/${lobbyId}/rationale`, { method: 'POST' });
-      const json = await res.json();
-      if (!res.ok) {
-        setRErr(json.error ?? 'failed to generate');
-        return;
-      }
-      setRationale(json.rationale ?? '');
-    } finally {
-      setRBusy(false);
-    }
-  }
-
-  const disabled = busy || !canFinalize || !isHost;
-
-  // helpers
-  const titleById = useMemo(() => {
-    const m = new Map<string, string>();
-    (cands ?? []).forEach(c => m.set(c.id, c.title));
-    return m;
-  }, [cands]);
-
-  return (
-    <Card
-      title="Finalize"
-      subtitle="Compute the winner"
-      actions={
-        <Button onClick={finalize} disabled={disabled} title={isHost ? undefined : 'Host only'}>
-          {busy ? 'Finalizing…' : 'Finalize & Compute'}
-        </Button>
-      }
-    >
-      {!canFinalize && <div className="text-sm text-gray-500">Need at least one complete ballot.</div>}
-      {!isHost && <div className="text-sm text-gray-500">Host only.</div>}
-      {err && <div className="mt-2 rounded border border-red-400/30 bg-red-500/10 p-2 text-red-300">{err}</div>}
-
-      {winner && (
-        <div className="mt-3 space-y-3 rounded-lg border border-emerald-600/30 bg-emerald-500/10 p-3">
-          <div>
-            <div className="font-semibold">Winner</div>
-            <div className="mt-1">
-              {winnerTitle && <div className="font-medium">{winnerTitle}</div>}
-              <div className="text-xs opacity-75 font-mono break-all">{winner}</div>
-            </div>
-          </div>
-
-          {scores && (
-            <div>
-              <div className="font-semibold">Scores</div>
-              <pre className="text-xs rounded border bg-black/5 dark:bg-white/10 p-2 overflow-auto">
-                {JSON.stringify(scores, null, 2)}
-              </pre>
-            </div>
-          )}
-
-          {/* AI rationale */}
-          <div className="pt-2 border-t border-emerald-600/20">
-            <div className="mb-1 flex items-center justify-between">
-              <div className="font-semibold">AI Rationale</div>
-              <Button onClick={generateRationale} disabled={rBusy || !isHost} title={isHost ? undefined : 'Host only'}>
-                {rBusy ? 'Generating…' : rationale ? 'Regenerate' : 'Generate'}
-              </Button>
-            </div>
-            {rErr && <div className="mt-1 rounded border border-red-400/30 bg-red-500/10 p-2 text-red-300">{rErr}</div>}
-            {rationale ? (
-              <p className="mt-2 text-sm leading-relaxed">{rationale}</p>
-            ) : (
-              <p className="mt-2 text-sm text-gray-500">Host can generate a short, friendly blurb (cached).</p>
-            )}
-          </div>
-
-          {/* Scoring details (leaderboard + per-voter) */}
-          {details && (
-            <div className="pt-3 border-t border-emerald-600/20 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="font-semibold">Scoring Details</div>
-                <div className="text-xs text-gray-500">
-                  Method: {details.method} · Tie-break: firsts → seconds → … → id
-                </div>
-              </div>
-
-              {/* Leaderboard */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="text-left opacity-70">
-                    <tr>
-                      <th className="py-1 pr-3">#</th>
-                      <th className="py-1 pr-3">Title</th>
-                      <th className="py-1 pr-3">Score</th>
-                      <th className="py-1 pr-3">1st</th>
-                      <th className="py-1 pr-3">2nd</th>
-                      <th className="py-1 pr-3">3rd</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {details.candidates.map((c, i) => (
-                      <tr key={c.id} className="border-t border-white/10">
-                        <td className="py-1 pr-3">{i + 1}</td>
-                        <td className="py-1 pr-3">{c.title}</td>
-                        <td className="py-1 pr-3 font-mono">{c.score}</td>
-                        <td className="py-1 pr-3 font-mono">{c.histogram[0] ?? 0}</td>
-                        <td className="py-1 pr-3 font-mono">{c.histogram[1] ?? 0}</td>
-                        <td className="py-1 pr-3 font-mono">{c.histogram[2] ?? 0}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Per-voter breakdown */}
-              <div className="space-y-2">
-                <div className="font-semibold">Per-voter rankings</div>
-                {!details.voters.length && <div className="text-sm text-gray-500">No saved ballots.</div>}
-                <ul className="space-y-1">
-                  {details.voters.map(v => (
-                    <li key={v.user_id} className="rounded border border-white/10 p-2">
-                      <div className="text-xs opacity-70">
-                        {v.nickname || 'Guest'} <span className="font-mono">({v.user_id.slice(0, 6)}…)</span>
-                      </div>
-                      <div className="mt-1 text-sm">
-                        {v.ranking
-                          .map(cid => titleById.get(cid) ?? cid)
-                          .map((t, idx) => `${idx + 1}. ${t}`)
-                          .join(' · ')}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </Card>
   );
 }
