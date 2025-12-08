@@ -138,10 +138,11 @@ export default function HomePage() {
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const trimmedTitle = title.trim();
 
   async function createLobby() {
     setErr(null);
-    const name = title.trim() || 'Movie night';
+    const name = trimmedTitle || 'Movie night';
     setBusy(true);
     try {
       const res = await fetch('/api/lobbies', {
@@ -192,7 +193,7 @@ export default function HomePage() {
               onKeyDown={(e) => e.key === 'Enter' && createLobby()}
             />
             <div className="pt-2">
-              <Button onClick={createLobby} disabled={busy}>
+              <Button type="button" onClick={createLobby} disabled={busy || !trimmedTitle}>
                 {busy ? 'Creating...' : 'Create Lobby'}
               </Button>
             </div>
