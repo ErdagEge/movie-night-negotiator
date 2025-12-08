@@ -102,7 +102,15 @@ function JoinByCodeBox() {
       const txt = await navigator.clipboard.readText();
       setRaw(txt);
     } catch {
-      setErr('Clipboard unavailable — paste manually.');
+      setErr('Clipboard unavailable - paste manually.');
+    }
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLInputElement>) {
+    const txt = e.clipboardData?.getData('text');
+    if (txt) {
+      e.preventDefault();
+      setRaw(txt);
     }
   }
 
@@ -110,10 +118,12 @@ function JoinByCodeBox() {
     <Card title="Join a lobby by code">
       <div className="flex gap-2">
         <Input
+          autoFocus
           placeholder="e.g. a1b2c3d4 or https://example.com/j/a1b2c3d4"
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submit()}
+          onPaste={handlePaste}
           aria-label="Invite code"
         />
         <Button type="button" onClick={pasteFromClipboard} title="Paste from clipboard">
@@ -193,7 +203,12 @@ export default function HomePage() {
               onKeyDown={(e) => e.key === 'Enter' && createLobby()}
             />
             <div className="pt-2">
-              <Button type="button" onClick={createLobby} disabled={busy || !trimmedTitle}>
+              <Button
+                type="button"
+                onClick={createLobby}
+                disabled={busy || !trimmedTitle}
+                aria-busy={busy}
+              >
                 {busy ? 'Creating...' : 'Create Lobby'}
               </Button>
             </div>
