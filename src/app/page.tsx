@@ -110,7 +110,7 @@ function JoinByCodeBox() {
     <Card title="Join a lobby by code">
       <div className="flex gap-2">
         <Input
-          placeholder="e.g. a1b2c3d4 or https://…/j/a1b2c3d4"
+          placeholder="e.g. a1b2c3d4 or https://example.com/j/a1b2c3d4"
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submit()}
@@ -187,7 +187,7 @@ export default function HomePage() {
             />
             <div className="pt-2">
               <Button onClick={createLobby} disabled={busy}>
-                {busy ? 'Creating…' : 'Create Lobby'}
+                {busy ? 'Creating...' : 'Create Lobby'}
               </Button>
             </div>
             {err && <div className="text-sm text-red-500">{err}</div>}
@@ -200,3 +200,4 @@ export default function HomePage() {
     </main>
   );
 }
+
