@@ -153,9 +153,15 @@ export default function HomePage() {
       if (!res.ok) {
         setErr(json.error ?? 'Failed to create lobby');
         return;
-        }
+      }
+      if (!json?.lobbyId || typeof json.lobbyId !== 'string') {
+        setErr('Lobby created, but no lobby ID returned.');
+        return;
+      }
       setTitle('');
       router.push(`/l/${json.lobbyId}`);
+    } catch {
+      setErr('Could not create lobby. Please try again.');
     } finally {
       setBusy(false);
     }
