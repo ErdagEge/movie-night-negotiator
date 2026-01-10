@@ -6,7 +6,7 @@ Pick a movie together. Create a lobby, everyone adds titles and ranks them, and 
 
 ---
 
-## Why it’s nice
+## Features
 
 - **Instant collaboration:** See new titles, members, and ranking progress live.
 - **Fair outcome:** Uses **Borda count** so everyone’s preferences count, not just the loudest voice.
@@ -16,51 +16,135 @@ Pick a movie together. Create a lobby, everyone adds titles and ranks them, and 
 
 ---
 
-## Key features
+## Tech Stack
 
-- 🧑‍🤝‍🧑 **Multi-user lobbies** with presence (who’s online)
-- 📝 **Add titles** quickly; live updates for all participants
-- 🗳️ **Ranked voting (Borda)** with score breakdown
-- ✅ **Finalize gate**: shows “full ballots” count and enables finalize at the right time
-- 🔗 **Short invites**: `/j/<code>` redirects to the lobby
-- 🧠 **AI rationale** (optional): cached, regenerable, and cheap
-- 🌗 **Clean, minimal UI** with dark-mode friendly colors
-
----
-
-## How it works (30-second tour)
-
-1. **Create** a lobby → share the short link.
-2. **Add** movie candidates (anyone).
-3. **Rank** your list locally; save when ready.
-4. **Watch progress**: “Full ballots: X / Y · Candidates: Z.”
-5. **Finalize** (host): computes winner and shows scores.
-6. *(Optional)* **Generate AI rationale**: a short, friendly justification.
+- **Framework:** Next.js 15 (App Router)
+- **Language:** TypeScript
+- **Styling:** Tailwind CSS
+- **Database & Realtime:** Supabase (PostgreSQL + Realtime Channels)
+- **Drag & Drop:** `@hello-pangea/dnd`
+- **AI:** OpenAI (Optional, for rationale generation)
 
 ---
 
-## Tech stack
+## Prerequisites
 
-- **Frontend:** Next.js (App Router), TypeScript, Tailwind
-- **Realtime:** Supabase Channels (Postgres Changes + Presence)
-- **Data:** Supabase Postgres (lobbies, members, candidates, rankings, results)
-- **Auth model:** Cookie-based guest identity by default; host role inferred from creator
-- **AI (optional):** OpenAI for a single, cached rationale per lobby
+To run this project locally, you will need:
 
----
-
-## Privacy & cost
-
-- Guests are identified by a **random cookie ID** + nickname (no PII required).
-- Runs comfortably on **free tiers** (Vercel + Supabase). AI is **opt-in** and called **once** per finalize (regenerable).
+- Node.js (v18 or later)
+- A [Supabase](https://supabase.com/) project (Free tier works great)
+- An [OpenAI](https://openai.com/) API Key (Optional, but required for the "Rationale" feature)
 
 ---
 
-## Roadmap
+## Getting Started
 
-- Auth + RLS (keep guest flow)
-- QR invites
-- Tests (Borda & API smoke)
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/yourusername/movie-night-negotiator.git
+cd movie-night-negotiator
+```
+
+### 2. Environment Setup
+
+Create a `.env.local` file in the root directory:
+
+```bash
+cp .env.example .env.local
+```
+
+Populate it with your keys:
+
+```ini
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+
+# OpenAI (Mandatory for AI Rationale feature)
+OPENAI_API_KEY=sk-...
+```
+
+### 3. Database Setup
+
+Run the following SQL in your Supabase SQL Editor to create the necessary tables:
+
+```sql
+-- Enable UUID extension
+create extension if not exists "uuid-ossp";
+
+-- Lobbies
+create table lobbies (
+  id uuid default uuid_generate_v4() primary key,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  code text unique not null,
+  title text not null,
+  creator text not null, -- Stores the host's user_id cookie
+  status text default 'open' check (status in ('open', 'closed'))
+);
+
+-- Members (Guests & Host)
+create table lobby_members (
+  lobby_id uuid references lobbies(id) on delete cascade not null,
+  user_id text not null,
+  nickname text not null,
+  joined_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  primary key (lobby_id, user_id)
+);
+
+-- Movie Candidates
+create table candidates (
+  id uuid default uuid_generate_v4() primary key,
+  lobby_id uuid references lobbies(id) on delete cascade not null,
+  title text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Rankings
+create table rankings (
+  lobby_id uuid references lobbies(id) on delete cascade not null,
+  user_id text not null,
+  candidate_id uuid references candidates(id) on delete cascade not null,
+  position integer not null, -- 0-based index
+  primary key (lobby_id, user_id, candidate_id)
+);
+
+-- Results (Final computation)
+create table results (
+  lobby_id uuid references lobbies(id) on delete cascade primary key,
+  winner_candidate_id uuid references candidates(id),
+  scores jsonb, -- Stores the full score breakdown
+  rationale text, -- AI generated text
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  method text,
+  tie_breaker text
+);
+
+-- Realtime Setup
+-- Enable realtime for all tables (simplest for this demo)
+alter publication supabase_realtime add table lobbies, lobby_members, candidates, rankings, results;
+```
+
+### 4. Run the development server
+
+```bash
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+---
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the project
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
 ---
 
