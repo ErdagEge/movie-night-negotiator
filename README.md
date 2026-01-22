@@ -28,7 +28,7 @@ Pick a movie together. Create a lobby, everyone adds titles and ranks them, and 
 
 ---
 
-## How it works (30-second tour)
+## How it works
 
 1. **Create** a lobby → share the short link.
 2. **Add** movie candidates (anyone).
